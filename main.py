@@ -11,6 +11,7 @@ import requests
 from datetime import datetime
 from typing import List, Optional, Any, Dict, Union
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, ConfigDict
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
@@ -889,6 +890,15 @@ Analyze this message, determine if it's a scam, extract any intelligence, and ge
         logger.info(f"Returning fallback response: {fallback_response}")
         from fastapi.responses import JSONResponse
         return JSONResponse(content=fallback_response)
+
+
+@app.get("/ping", response_class=PlainTextResponse)
+async def keep_alive():
+    """
+    Lightweight keep-alive endpoint for UptimeRobot.
+    Returns minimal 200 OK to prevent server sleeping.
+    """
+    return "alive"
 
 
 @app.get("/health")
