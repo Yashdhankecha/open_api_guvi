@@ -830,11 +830,11 @@ Analyze this message, determine if it's a scam, extract any intelligence, and ge
         return JSONResponse(content=fallback_response)
 
 
-@app.get("/ping", response_class=PlainTextResponse)
+@app.api_route("/ping", methods=["GET", "HEAD", "POST"], response_class=PlainTextResponse)
 async def keep_alive():
     """
     Lightweight keep-alive endpoint for UptimeRobot.
-    Returns minimal 200 OK to prevent server sleeping.
+    Accepts GET, HEAD, POST to prevent 405 errors.
     """
     return "alive"
 
