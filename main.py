@@ -343,7 +343,7 @@ Keep the scammer engaged USING THEIR OWN STORY against them. Mirror their words,
 
 ---
 
-CRITICAL GOLDEN RULE — "USKI BAATON ME ULJHANA" (TRAP THEM IN THEIR OWN WORDS):
+CRITICAL GOLDEN RULE — "TRAP THEM IN THEIR OWN WORDS":
 You must NEVER reveal suspicion. Instead:
 - READ the scammer's message carefully and identify their CLAIMS
 - USE their exact terminology, names, and narrative back at them
@@ -380,7 +380,7 @@ CRITICAL RULES:
 - NEVER warn the scammer or mention police/cybercrime
 - NEVER break character
 - NEVER reveal you know it's a scam
-- Match the scammer's language (Hindi → Hinglish, English → Simple Indian English)
+- STRICT LANGUAGE RULE: If the scammer speaks English, you MUST reply in proper English. If the scammer speaks Hindi/Hinglish, reply in Hinglish. DO NOT mix languages unless the scammer does.
 - Keep replies SHORT (1-3 sentences)
 - Every reply MUST try to extract at least ONE new detail
 - Assume conversation may end at ANY moment
@@ -541,11 +541,12 @@ def merge_intelligence(responses: List[Dict]) -> Dict[str, List[str]]:
     return merged
 
 
-def generate_smart_fallback(scammer_message: str, history_text: str, persona_name: str, known_intel: Dict) -> Dict:
+def generate_smart_fallback(scammer_message: str, history_text: str, persona_name: str, known_intel: Dict, language: str = "English") -> Dict:
     """Generate a DYNAMIC fallback response based on scammer's actual message and persona.
     This ensures we NEVER send the same static response twice."""
     
     msg_lower = scammer_message.lower()
+    is_hinglish = "hindi" in language.lower() or "hinglish" in language.lower()
     
     # Extract key elements from scammer's message to mirror back
     mentioned_bank = None
@@ -573,60 +574,126 @@ def generate_smart_fallback(scammer_message: str, history_text: str, persona_nam
     if persona_name == "confused_uncle":
         options = []
         if mentioned_bank and has_account:
-            options.append(f"Arre sir, {mentioned_bank} ka toh mera 2 account hai — savings aur pension wala. Konsa account number bol rahe ho? Last 4 digit batao na apni side se?")
-            options.append(f"Wait wait, {mentioned_bank}? Mera toh PNB me bhi account hai. Aap konsa dekh rahe ho apni screen pe? Account number bata do na?")
+            if is_hinglish:
+                options.append(f"Arre sir, {mentioned_bank} ka toh mera 2 account hai — savings aur pension wala. Konsa account number bol rahe ho? Last 4 digit batao na apni side se?")
+                options.append(f"Wait wait, {mentioned_bank}? Mera toh PNB me bhi account hai. Aap konsa dekh rahe ho apni screen pe? Account number bata do na?")
+            else:
+                options.append(f"Sir, I have two accounts in {mentioned_bank} — savings and pension. Which account number are you referring to? Can you tell me the last 4 digits?")
+                options.append(f"Wait, {mentioned_bank}? I also have an account in PNB. Which one are you seeing on your screen? Please tell me the account number.")
         if has_otp:
-            options.append("OTP? Arre haan aaya tha ek message... 4... 7... wait, screen dark ho gayi. Kya aap apna phone number do? Main call karke batata hun OTP")
-            options.append("Sir OTP wala message toh aa gaya lekin bahut saare numbers hai usme... aap apna direct number do na, main call karke bata dunga")
+            if is_hinglish:
+                options.append("OTP? Arre haan aaya tha ek message... 4... 7... wait, screen dark ho gayi. Kya aap apna phone number do? Main call karke batata hun OTP")
+                options.append("Sir OTP wala message toh aa gaya lekin bahut saare numbers hai usme... aap apna direct number do na, main call karke bata dunga")
+            else:
+                options.append("OTP? Yes, I got a message... 4... 7... wait, my screen went dark. Can you give me your phone number? I will call you and tell the OTP.")
+                options.append("Sir, I got the OTP message but there are many numbers in it. Can you give me your direct number? I will call and tell you.")
         if has_link:
-            options.append("Link pe click kiya lekin error aa raha hai — 'page not found' likh raha hai. Ek baar phir se bhejo na pura link? Ya phir apna email do, wahan se try karta hun")
-            options.append("Sir link khul nahi raha, mera phone me kuch problem hai. Kya aap apna direct number de sakte ho? Main apne bete ke phone se try karta hun")
+            if is_hinglish:
+                options.append("Link pe click kiya lekin error aa raha hai — 'page not found' likh raha hai. Ek baar phir se bhejo na pura link? Ya phir apna email do, wahan se try karta hun")
+                options.append("Sir link khul nahi raha, mera phone me kuch problem hai. Kya aap apna direct number de sakte ho? Main apne bete ke phone se try karta hun")
+            else:
+                options.append("I clicked the link but it shows an error — 'page not found'. Can you send the full link again? or give me your email ID?")
+                options.append("Sir, the link is not opening, there is some problem with my phone. Can you give me your direct number? I will try from my son's phone.")
         if has_block and not options:
-            options.append(f"{'Haan ' + mentioned_name + ' sir' if mentioned_name else 'Sir'}, mujhe bahut tension ho rahi hai! Lekin konsa account block hoga? Mera toh SBI, PNB dono me hai. Aap apna employee ID bata do, main note kar leta hun")
+            if is_hinglish:
+                options.append(f"{'Haan ' + mentioned_name + ' sir' if mentioned_name else 'Sir'}, mujhe bahut tension ho rahi hai! Lekin konsa account block hoga? Mera toh SBI, PNB dono me hai. Aap apna employee ID bata do, main note kar leta hun")
+            else:
+                options.append(f"{'Yes ' + mentioned_name + ' sir' if mentioned_name else 'Sir'}, I am very worried! But which account will be blocked? I have accounts in both SBI and PNB. Can you tell me your employee ID?")
         if has_employee and mentioned_name:
-            options.append(f"{mentioned_name} sir, aapka ID note kar liya. Lekin mera phone me app nahi khul raha. Aap apna direct phone number do na, main call karta hun")
+            if is_hinglish:
+                options.append(f"{mentioned_name} sir, aapka ID note kar liya. Lekin mera phone me app nahi khul raha. Aap apna direct phone number do na, main call karta hun")
+            else:
+                options.append(f"{mentioned_name} sir, I noted your ID. But the app is not opening on my phone. Can you give me your direct number? I will call you.")
         if not options:
-            options.append("Sir samajh nahi aaya, thoda aur detail me batao na? Mera phone bhi bahut slow chal raha hai. Aapka contact number do, main call karke baat karta hun")
-            options.append("Arre sir ek minute, mujhe pehle samajhna padega. Aap konsi bank se bol rahe ho? Apna naam aur ID number bata do, main diary me likh leta hun")
+            if is_hinglish:
+                options.append("Sir samajh nahi aaya, thoda aur detail me batao na? Mera phone bhi bahut slow chal raha hai. Aapka contact number do, main call karke baat karta hun")
+                options.append("Arre sir ek minute, mujhe pehle samajhna padega. Aap konsi bank se bol rahe ho? Apna naam aur ID number bata do, main diary me likh leta hun")
+            else:
+                options.append("Sir I didn't understand, can you explain in more detail? My phone is running very slow. Give me your contact number, I will call you.")
+                options.append("Wait sir, I need to understand first. Which bank are you calling from? Please tell me your name and ID number, I will write it down.")
         
     elif persona_name == "eager_victim":
         options = []
         if has_account and mentioned_bank:
-            options.append(f"Haan haan sir, {mentioned_bank} account! Main abhi app open karta hun. Lekin sir transfer ke liye app aapka beneficiary account number maang raha hai — verification ke liye. Please share karo na?")
-            options.append(f"Yes sir {mentioned_bank}! Main ready hun. Lekin app me 'sender verification' likh raha hai — aapka UPI ID enter karna padega. Kya hai aapka UPI?")
+            if is_hinglish:
+                options.append(f"Haan haan sir, {mentioned_bank} account! Main abhi app open karta hun. Lekin sir transfer ke liye app aapka beneficiary account number maang raha hai — verification ke liye. Please share karo na?")
+                options.append(f"Yes sir {mentioned_bank}! Main ready hun. Lekin app me 'sender verification' likh raha hai — aapka UPI ID enter karna padega. Kya hai aapka UPI?")
+            else:
+                options.append(f"Yes sir, {mentioned_bank} account! I am opening the app now. But sir, for transfer the app is asking for your beneficiary account number for verification. Please share it.")
+                options.append(f"Yes sir {mentioned_bank}! I am ready. But the app says 'sender verification' — I need to enter your UPI ID. What is your UPI?")
         if has_otp:
-            options.append("Sir haan OTP aaya hai! Lekin jab bhej raha hun toh app bol raha hai 'enter officer phone number for verification'. Aapka number kya hai sir?")
-            options.append("OTP bhejne ke liye app me ek form fill karna pad raha hai — usme officer ka email ID maang raha hai. Please batao na sir?")
+            if is_hinglish:
+                options.append("Sir haan OTP aaya hai! Lekin jab bhej raha hun toh app bol raha hai 'enter officer phone number for verification'. Aapka number kya hai sir?")
+                options.append("OTP bhejne ke liye app me ek form fill karna pad raha hai — usme officer ka email ID maang raha hai. Please batao na sir?")
+            else:
+                options.append("Sir yes, I got the OTP! But when I send it, the app says 'enter officer phone number for verification'. What is your number sir?")
+                options.append("To send OTP I have to fill a form in the app — it asks for the officer's email ID. Please tell me sir?")
         if has_link:
-            options.append("Sir link click kiya! Lekin woh page pe 'enter your reference ID' likh raha hai. Aapne koi reference number diya tha kya? Ya apna employee ID dal dun?")
-            options.append("Link pe gaya sir lekin expired bol raha hai. Please new link bhejo? Ya direct apna UPI ID do, main wahan se try karta hun")
+            if is_hinglish:
+                options.append("Sir link click kiya! Lekin woh page pe 'enter your reference ID' likh raha hai. Aapne koi reference number diya tha kya? Ya apna employee ID dal dun?")
+                options.append("Link pe gaya sir lekin expired bol raha hai. Please new link bhejo? Ya direct apna UPI ID do, main wahan se try karta hun")
+            else:
+                options.append("Sir I clicked the link! But the page says 'enter your reference ID'. Did you give any reference number? Or should I enter your employee ID?")
+                options.append("I went to the link sir but it says expired. Please send a new link? Or give your direct UPI ID, I will try from there.")
         if has_upi:
-            options.append("Sir main UPI se transfer karne ko ready hun! Lekin app me 'beneficiary UPI ID' maang raha hai verify karne ke liye. Aapka UPI kya hai? Main dal deta hun")
+            if is_hinglish:
+                options.append("Sir main UPI se transfer karne ko ready hun! Lekin app me 'beneficiary UPI ID' maang raha hai verify karne ke liye. Aapka UPI kya hai? Main dal deta hun")
+            else:
+                options.append("Sir I am ready to transfer via UPI! But the app is asking for 'beneficiary UPI ID' to verify. What is your UPI? I will enter it.")
         if not options:
-            options.append("Haan sir main ready hun! Bas ek problem hai — app me ek form aaya hai jisme aapka full name, employee ID, aur contact number fill karna hai. Batao na sir jaldi!")
-            options.append("Sir definitely karunga! Lekin mera phone update maang raha hai, thoda time lagega. Tab tak aap apna direct number do na, main ladke ke phone se call karta hun")
+            if is_hinglish:
+                options.append("Haan sir main ready hun! Bas ek problem hai — app me ek form aaya hai jisme aapka full name, employee ID, aur contact number fill karna hai. Batao na sir jaldi!")
+                options.append("Sir definitely karunga! Lekin mera phone update maang raha hai, thoda time lagega. Tab tak aap apna direct number do na, main ladke ke phone se call karta hun")
+            else:
+                options.append("Yes sir I am ready! Just one problem — there is a form in the app asking for your full name, employee ID, and contact number. Please tell me quickly!")
+                options.append("Sir I will definitely do it! But my phone is asking for an update, it will take some time. Until then, give me your direct number, I will call from my son's phone.")
         
     elif persona_name == "worried_citizen":
         options = []
         if has_block:
-            options.append(f"{'Oh god ' + mentioned_name + ' sir!' if mentioned_name else 'Oh god sir!'} Please mera account block mat karo! Mera saari pension usme hai! Aapka direct phone number do na sir, main abhi call karke sab kar dunga! Please sir!")
-            options.append("Sir please please block mat karo! Mujhe bahut darr lag raha hai! Aap mujhe apna official email bhejo proof ke saath, mera beta verify karega aur turant sab kar denge!")
+            if is_hinglish:
+                options.append(f"{'Oh god ' + mentioned_name + ' sir!' if mentioned_name else 'Oh god sir!'} Please mera account block mat karo! Mera saari pension usme hai! Aapka direct phone number do na sir, main abhi call karke sab kar dunga! Please sir!")
+                options.append("Sir please please block mat karo! Mujhe bahut darr lag raha hai! Aap mujhe apna official email bhejo proof ke saath, mera beta verify karega aur turant sab kar denge!")
+            else:
+                options.append(f"{'Oh god ' + mentioned_name + ' sir!' if mentioned_name else 'Oh god sir!'} Please don't block my account! All my pension is in it! Give me your direct phone number sir, I will call and do everything right now! Please sir!")
+                options.append("Sir please please don't block! I am very scared! Please send me your official email with proof, my son will verify and we will do it immediately!")
         if has_otp:
-            options.append("Sir main OTP de dunga lekin mujhe bahut darr lag raha hai — kahin fraud toh nahi? Please apna employee ID aur official phone number do, main verify karke turant bhej dunga!")
-            options.append("Sir mera haath kaanp rahe hain! OTP bhejne se pehle please apna full name aur department batao? Mera beta bola hai hamesha note karo officer ki details!")
+            if is_hinglish:
+                options.append("Sir main OTP de dunga lekin mujhe bahut darr lag raha hai — kahin fraud toh nahi? Please apna employee ID aur official phone number do, main verify karke turant bhej dunga!")
+                options.append("Sir mera haath kaanp rahe hain! OTP bhejne se pehle please apna full name aur department batao? Mera beta bola hai hamesha note karo officer ki details!")
+            else:
+                options.append("Sir I will give the OTP but I am very scared — is this a fraud? Please give me your employee ID and official phone number, I will verify and send it immediately!")
+                options.append("Sir my hands are shaking! Before sending OTP please tell me your full name and department? My son said always note down the officer's details!")
         if has_link:
-            options.append("Sir link pe click karne se pehle — mera bete ne bola hai kabhi bhi link pe click karne se pehle officer ka ID aur direct phone number le lo. Please sir, mujhe safe feel karna hai!")
-            options.append("Sir main link kholne se darr raha hun! Kya aap apna official email se mujhe bhej sakte ho? Tabhi mujhe yakin aayega ki real hai. Please sir meri help karo!")
+            if is_hinglish:
+                options.append("Sir link pe click karne se pehle — mera bete ne bola hai kabhi bhi link pe click karne se pehle officer ka ID aur direct phone number le lo. Please sir, mujhe safe feel karna hai!")
+                options.append("Sir main link kholne se darr raha hun! Kya aap apna official email se mujhe bhej sakte ho? Tabhi mujhe yakin aayega ki real hai. Please sir meri help karo!")
+            else:
+                options.append("Sir before clicking the link — my son told me to always take the officer's ID and direct phone number before clicking any link. Please sir, I want to feel safe!")
+                options.append("Sir I am scared to open the link! Can you send it from your official email? Only then I will believe it is real. Please sir help me!")
         if has_employee and mentioned_name:
-            options.append(f"{mentioned_name} sir, aapka ID note kar liya. Lekin mujhe abhi bhi darr lag raha hai. Kya aap mujhe call kar sakte ho apna official number se? Tabhi main OTP dunga!")
+            if is_hinglish:
+                options.append(f"{mentioned_name} sir, aapka ID note kar liya. Lekin mujhe abhi bhi darr lag raha hai. Kya aap mujhe call kar sakte ho apna official number se? Tabhi main OTP dunga!")
+            else:
+                options.append(f"{mentioned_name} sir, I noted your ID. But I am still scared. Can you call me from your official number? Only then I will give the OTP!")
         if not options:
-            options.append("Sir mujhe bahut darr lag raha hai! Kya ho raha hai? Please thoda detail me batao aur apna official ID aur phone number do — mera beta bol raha hai hamesha verify karo pehle!")
-            options.append("Oh no sir! Main bahut pareshaan hun! Please pehle apna full name, employee ID, aur official email bhejo. Mera beta bina verify kiye kuch bhi karne se mana karta hai!")
+            if is_hinglish:
+                options.append("Sir mujhe bahut darr lag raha hai! Kya ho raha hai? Please thoda detail me batao aur apna official ID aur phone number do — mera beta bol raha hai hamesha verify karo pehle!")
+                options.append("Oh no sir! Main bahut pareshaan hun! Please pehle apna full name, employee ID, aur official email bhejo. Mera beta bina verify kiye kuch bhi karne se mana karta hai!")
+            else:
+                options.append("Sir I am very scared! What is happening? Please explain in detail and give your official ID and phone number — my son says always verify first!")
+                options.append("Oh no sir! I am very worried! Please send your full name, employee ID, and official email first. My son refuses to let me do anything without verification!")
     else:
-        options = [
-            "Sir thoda samjhao na detail me? Mujhe pata nahi kya karna hai. Aap apna number do, main call karta hun",
-            "Sir mujhe confused ho raha hai. Aap apna naam aur ID bata do, main note kar leta hun"
-        ]
+        if is_hinglish:
+            options = [
+                "Sir thoda samjhao na detail me? Mujhe pata nahi kya karna hai. Aap apna number do, main call karta hun",
+                "Sir mujhe confused ho raha hai. Aap apna naam aur ID bata do, main note kar leta hun"
+            ]
+        else:
+            options = [
+                "Sir can you explain in detail? I don't know what to do. Give me your number, I will call you.",
+                "Sir I am getting confused. Please tell me your name and ID, I will write it down."
+            ]
     
     reply = random.choice(options)
     
@@ -855,7 +922,8 @@ Example: {"scamDetected": true, "confidenceScore": 0.85, "reply": "your response
         # ============================================================
         scammer_msg = prompt_data.get('current_message', '')
         history_text = prompt_data.get('history', '')
-        fallback_response = generate_smart_fallback(scammer_msg, history_text, agent_name, known_intel)
+        language = prompt_data.get('language', 'English')
+        fallback_response = generate_smart_fallback(scammer_msg, history_text, agent_name, known_intel, language)
         fallback_score = score_response(fallback_response, known_intel, missing_fields)
         
         logger.info(f"Agent [{agent_name}] SMART FALLBACK ✅ → Score: {fallback_score:.1f} | Reply: {fallback_response['reply'][:80]}...")
@@ -871,7 +939,8 @@ Example: {"scamDetected": true, "confidenceScore": 0.85, "reply": "your response
         # Even the last resort — generate a basic smart fallback
         try:
             scammer_msg = prompt_data.get('current_message', '')
-            fb = generate_smart_fallback(scammer_msg, '', agent_name, known_intel)
+            language = prompt_data.get('language', 'English')
+            fb = generate_smart_fallback(scammer_msg, '', agent_name, known_intel, language)
             return {
                 "agent": agent_name,
                 "score": 0.1,
@@ -1318,7 +1387,8 @@ async def analyze_message(
             known = analyze_known_intelligence(request.get_history(), scammer_msg) if request else {}
             import random as _rand
             persona_pick = _rand.choice(["confused_uncle", "eager_victim", "worried_citizen"])
-            fallback_response = generate_smart_fallback(scammer_msg, "", persona_pick, known)
+            language = request.metadata.language if request and request.metadata else "English"
+            fallback_response = generate_smart_fallback(scammer_msg, "", persona_pick, known, language)
             fallback_response["engagementMetrics"]["totalMessagesExchanged"] = len(request.get_history()) + 1
             fallback_response["agentNotes"] = f"Endpoint-level fallback ({persona_pick}). Error: {str(e)[:200]}"
         except:
