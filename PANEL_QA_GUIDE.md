@@ -675,9 +675,6 @@ Isse har agent alag tarah ka response deta hai — diversity aati hai."
 ### Q16: "System kabhi completely fail ho sakta hai?"
 **A:** "Practically nahi. Agent level pe 3 tiers hain — Tier 3 me koi LLM call nahi hota, seedha rule-based hai toh fail hone ka koi chance nahi. Endpoint level pe bhi dynamic fallback hai. Aur absolute worst case me bhi ek last-resort static reply hai. 5 layers of protection hain."
 
-### Q17: "API secure kaise hai?"
-**A:** "Har critical endpoint (`/analyze`) `x-api-key` header se secured hai. Ye key server ke `.env` file me encrypted rehti hai environment variable ke roop me. Agar key match nahi hoti, toh server immediately `401 Unauthorized` return karta hai, request process hone se pehle hi."
-
 ---
 
 *Panel ke liye tip: Confidence se bolo, code ke line numbers yaad rakhna zaruri nahi — concept samjhana kaafi hai.* 🎯
