@@ -897,17 +897,32 @@ app = FastAPI(
 )
 
 
-def verify_api_key(x_api_key: str = Header(..., alias="x-api-key")):
-    """Verify the API key from request headers."""
-    expected_key = os.getenv("HONEYPOT_API_KEY", "your-secret-api-key").strip()
+def verify_api_key(
+    x_api_key: Optional[str] = Header(None, alias="x-api-key"),
+    apikey: Optional[str] = None
+):
+    """
+    Verify the API key from request headers OR query parameter.
+    Priority: Header > Query Param
+    """
+    received_key = x_api_key or apikey
+    expected_key = os.getenv("HONEYPOT_API_KEY", "").strip()
     
-    if expected_key == "your-secret-api-key":
-        logger.warning("Using default API key! Set HONEYPOT_API_KEY in .env")
+    # DEBUG LOGGING
+    logger.info(f"AUTH DEBUG: Header='{x_api_key}', Query='{apikey}'")
+    
+    if not received_key:
+        logger.error("AUTH FAILED: No API key provided in header or query")
+        raise HTTPException(status_code=401, detail="Missing API key. Use header 'x-api-key' or query param 'apikey'")
         
-    if x_api_key.strip() != expected_key:
+    if not expected_key or expected_key == "your-secret-api-key":
+        logger.warning("AUTH WARNING: Using insecure/default server key! Check .env loading.")
+        
+    if received_key.strip() != expected_key:
+        logger.error(f"AUTH FAILED: Key mismatch. Received: '{received_key[:5]}...', Expected: '{expected_key[:5]}...'")
         raise HTTPException(status_code=401, detail="Invalid API key")
     
-    return x_api_key
+    return received_key
 
 
 def get_llm(temperature: float = 0.8):
