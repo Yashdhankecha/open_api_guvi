@@ -42,7 +42,7 @@ An **AI-powered cybersecurity honeypot** that doesn't just detect scams — it *
 | 🔀 **Intelligence Merging** | Combines intel from **ALL 3 agents**, not just the winner |
 | 🔍 **Dual Extraction Pipeline** | Regex + 3× LLM extraction — nothing slips through |
 | ⚡ **Zero Extra Latency** | Parallel execution — 3 agents take the **same time as 1** |
-| 🛡️ **Graceful Fallback** | 3-tier execution: Structured → Raw Parse → Smart Context-Aware fallback |
+| 🛡️ **Graceful Fallback** | If all agents fail, hardcoded response still keeps the conversation alive |
 | 📡 **Auto Callback** | Sends a full intelligence report to the GUVI endpoint when threshold is met |
 | 🌐 **Multi-Language** | Responds in the scammer's language (Hindi ↔ English ↔ Hinglish) |
 
@@ -124,31 +124,6 @@ After all 3 agents respond, each is scored and the **highest-scoring reply** is 
 | **Safety Penalty** | -20 each | Heavy penalty for danger words (*scam, fraud, police, etc.*) |
 
 > **Important:** The winning agent's reply goes to the scammer, but intelligence is **merged from ALL 3 agents**.
-
----
-
-## 🛡️ 3-Tier Execution (Anti-Hallucination)
-
-Each agent has **3 fallback layers** to guarantee a unique, contextual response:
-
-| Tier | Strategy | LLM Required? |
-|:---:|---|:---:|
-| **Tier 1** | Structured Pydantic output | ✅ Yes |
-| **Tier 2** | Raw text + manual JSON extraction (3 parse methods) | ✅ Yes |
-| **Tier 3** | Smart context-aware fallback (20+ replies per persona) | ❌ No LLM |
-
-```
-Tier 3 analyzes the scammer's actual message:
-├── Detects: bank names (SBI, PNB, HDFC...)
-├── Detects: OTP/PIN keywords
-├── Detects: links, URLs
-├── Detects: names ("Mr. Sharma")
-├── Detects: urgency (block, suspend)
-└── Picks persona-specific reply → random selection
-
-Result: 20+ replies × 3 personas = 60+ unique responses
-         → SAME reply NEVER repeats
-```
 
 ---
 
@@ -419,14 +394,11 @@ Scammer receives reply — suspects nothing 🪤
 
 | Scenario | What Happens |
 |---|---|
-| Tier 1 fails (structured output) | Tier 2 kicks in — raw text parsed for JSON |
-| Tier 2 also fails | Tier 3 — context-aware fallback (no LLM, reads scammer's message) |
-| 1 agent completely fails | Other 2 compete normally |
-| 2 agents fail | Remaining 1 agent's response (from any tier) is used |
-| All 3 fail at all tiers | Endpoint-level dynamic fallback using `generate_smart_fallback()` |
-| Absolute worst case | Last resort: *"Sir ek minute, mera screen hang ho gaya. Aap apna naam aur employee ID bata do."* |
+| 1 agent fails | Other 2 compete normally |
+| 2 agents fail | Remaining 1 agent's response is used |
+| All 3 fail | Hardcoded fallback: *"Which account is this about? I have multiple. Also your name and employee ID please."* |
 
-The conversation **never breaks**. The response is **never repeated**.
+The conversation **never breaks**. The scammer always gets a response.
 
 ---
 
