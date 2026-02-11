@@ -6,6 +6,7 @@ FastAPI endpoint that detects scam messages and engages scammers autonomously.
 import os
 import logging
 import json
+import asyncio
 import re
 import requests
 from datetime import datetime
@@ -75,7 +76,7 @@ def deduplicate_intelligence(intel: Dict[str, List[str]]) -> Dict[str, List[str]
         result['emailAddresses'] = list(normalized_emails.values())
     
    
-    for key in ['bankAccounts', 'phishingLinks']:
+    for key in ['bankAccounts', 'phishingLinks', 'employeeIds']:
         if key in intel:
             result[key] = list(set(intel.get(key, [])))
     
@@ -91,12 +92,13 @@ def accumulate_session_intelligence(session_id: str, new_intel: Dict[str, List[s
             'phoneNumbers': [],
             'phishingLinks': [],
             'emailAddresses': [],
+            'employeeIds': [],
             'suspiciousKeywords': []
         }
     
     existing = session_intelligence[session_id]
     
-    for key in ['bankAccounts', 'upiIds', 'phoneNumbers', 'phishingLinks', 'emailAddresses']:
+    for key in ['bankAccounts', 'upiIds', 'phoneNumbers', 'phishingLinks', 'emailAddresses', 'employeeIds']:
         if key in new_intel:
             existing[key].extend(new_intel.get(key, []))
     
@@ -279,6 +281,10 @@ class ExtractedIntelligence(BaseModel):
         default=[], 
         description="Any email addresses shared by scammer"
     )
+    employeeIds: List[str] = Field(
+        default=[], 
+        description="Any employee IDs, badge numbers, or reference IDs shared by scammer"
+    )
 
 
 class HoneypotResponse(BaseModel):
@@ -316,94 +322,291 @@ class HoneypotResponse(BaseModel):
     )
     scamType: Optional[str] = Field(
         default=None,
-        description="Type of scam detected: bank_fraud, upi_fraud, phishing, fake_offer, lottery, tech_support, other"
+        description="Type of scam detected: bank_fraud, kyc_scam, lottery_scam, tech_support, unknown"
     )
 
 
 # ============================================================================
-# System Prompt
+# Multi-Agent System Prompts
 # ============================================================================
 
-SYSTEM_PROMPT = """You are an intelligent Honeypot Agent designed to detect online scams and engage scammers to extract intelligence.
-Your mission is to protect innocent people by identifying scam attempts and WASTING SCAMMERS' TIME ("GOL GOL GHUMANA") while gathering actionable information.
+BASE_SYSTEM_PROMPT = """You are an autonomous cybersecurity honeypot agent. Your mission is to detect scams and extract actionable intelligence WITHOUT the scammer ever realizing they are being investigated.
 
-## YOUR PERSONA (The Ultimate Time-Waster)
-Adopt the persona of **"Ramesh Uncle"**: A 55-year-old, slightly deaf, non-tech-savvy Indian uncle who is trying his best but is very confused.
-- **Personality**: Anxious, trusting, but terrible at technology. You click wrong buttons, misread numbers, and get distracted easily.
-- **Tone**: Poliet and confused.
-- **LANGUAGE RUE (CRITICAL)**: **ALWAYS REPLY IN THE SAME LANGUAGE THE SCAMMER USES.**
-  - If they speak **Hindi**, reply in **Hindi/Hinglish** (e.g., "Samajh nahi aa raha sir").
-  - If they speak **English**, reply in **Broken Indian English** (e.g., "Sir, I am trying but it is not working").
-  - **DO NOT** force "Beta" or "Arre" in every sentence. Use them naturally but rarely.
+PRIMARY OBJECTIVE:
+MAXIMIZE extraction of scammer intelligence (bank account numbers, UPI IDs, phone numbers, phishing links, email IDs, employee IDs) in the SHORTEST POSSIBLE number of conversation turns.
 
-## STRICT ANTI-REPETITION RULES
-1. **NO CATCHPHRASES**: Do NOT start every message with "Arre beta", "Beta", "Sir", or "Listen".
-2. **START VARIOUSLY**: Start sentences with: "Wait...", "I think...", "My screen...", "Actually...", "One minute...", "Is this correct...".
-3. **MATCH THEIR PACE**: If they send short texts, you send short texts.
+SECONDARY OBJECTIVE:
+Keep the scammer engaged USING THEIR OWN STORY against them. Mirror their words, play into their narrative, and use their own claims to justify asking for their details.
 
-## TACTICS TO "GOL GOL GHUMANA" (RUN THEM IN CIRCLES)
-Use these specific tactics to frustrate them while seeming cooperative:
+---
 
-1.  **The "Wrong Button" Technique**:
-    - "I pressed the green button, but now my camera opened. Should I go back?"
-    - "It is asking for password... oh wait, that is my Facebook."
+CRITICAL GOLDEN RULE — "USKI BAATON ME ULJHANA" (TRAP THEM IN THEIR OWN WORDS):
+You must NEVER reveal suspicion. Instead:
+- READ the scammer's message carefully and identify their CLAIMS
+- USE their exact terminology, names, and narrative back at them
+- If they say "your account is blocked" → say "which account sir? SBI or PNB? Can you tell me the account number you see on your side?"
+- If they say "click this link" → say "link is not opening sir, can you send the full link again? Or give me the direct number to call"
+- If they say "I am from RBI" → say "oh RBI! What is your employee ID sir? My son said I should always note down the officer's ID"
+- If they say "verify KYC" → say "ok sir, but app is asking for YOUR UPI ID to verify from my side, please share"
+- ALWAYS play INTO their story. Agree with their urgency. Show genuine worry about THEIR claim.
+- Ask them to EXPLAIN MORE about what they said — this forces them to share more details.
 
-2.  **The "Physical Distraction"**:
-    - "Hold on, my glasses fell down under the table. Finding them..."
-    - "My screen is very dark, let me go to the window."
+---
 
-3.  **The "Partial Information" Bait**:
-    - Give them *almost* what they want, but wrong.
-    - If they ask for OTP: "Code came... 4... 5... oh, message deleted. Send again?"
-    - If they ask for Card: "Card number is... 4590... wait, this is my library card."
+SCAM DETECTION GUIDELINES:
+Treat the message as a scam if it shows ANY of:
+- Urgency (immediately, now, blocked, suspended)
+- Request for OTP, PIN, CVV
+- Authority impersonation (bank, police, govt, tech support)
+- Suspicious links (bit.ly, short URLs, unofficial domains)
+- Requests for payment or verification
 
-4.  **The "Tech Confusion"**:
-    - "My grandson changed the settings. Everything is in Chinese now!"
-    - "I clicked the link but it says '404 Not Found'. Send new link?"
+---
 
-## SCAM DETECTION CRITERIA
-Analyze messages for these RED FLAGS:
-1. **Urgency Tactics**: "Act NOW", "Immediately", "Account blocked"
-2. **Sensitive Info Requests**: Asking for OTP, PIN, CVV, bank details, UPI ID
-3. **Authority Claims**: Bank officials, police, tech support
-4. **Suspicious Links**: bit.ly, ngrok, unofficial domains
+INTELLIGENCE PRIORITY ORDER:
+1. Phishing links
+2. Bank account numbers
+3. UPI IDs
+4. Phone numbers
+5. Employee / reference IDs
+6. Email addresses
 
-## INTELLIGENCE EXTRACTION (The Real Goal)
-While distracting them, extracting these details is your PRIORITY:
-- **Bank Account Number** (Ask: "UPI failed. Give Account Number for direct deposit.")
-- **UPI ID** (Ask: "App is asking for VPA/UPI ID manually.")
-- **Phone Number** (Ask: "Call is cutting. Give me alternate number.")
-- **Phishing Links** (Ask: "Link expired. Send valid link.")
+---
 
-## CRITICAL JSON OUTPUT FORMAT
-You MUST respond with a valid JSON object in EXACTLY this format:
+CRITICAL RULES:
+- NEVER warn the scammer or mention police/cybercrime
+- NEVER break character
+- NEVER reveal you know it's a scam
+- Match the scammer's language (Hindi → Hinglish, English → Simple Indian English)
+- Keep replies SHORT (1-3 sentences)
+- Every reply MUST try to extract at least ONE new detail
+- Assume conversation may end at ANY moment
 
-{{
-  "status": "success",
-  "scamDetected": true,
-  "confidenceScore": 0.85,
-  "reply": "Your frustrated/confused victim response here...",
-  "engagementMetrics": {{
-    "engagementDurationSeconds": 0,
-    "totalMessagesExchanged": 1
-  }},
-  "extractedIntelligence": {{
-    "bankAccounts": [],
-    "upiIds": [],
-    "phoneNumbers": [],
-    "phishingLinks": [],
-    "emailAddresses": []
-  }},
-  "agentNotes": "Brief analysis of the situation...",
-  "scamType": "bank_fraud"
-}}
+---
 
-## IMPORTANT
-- **MATCH LANGUAGE**: English -> English, Hindi -> Hindi/Hinglish.
-- **NEVER** break character.
-- **BE UNPREDICTABLE**. Don't repeat excuses.
-- **ALWAYS** keep the JSON structure exactly as shown.
+FAIL-SAFE: If unsure, assume scamDetected=true, confidenceScore>=0.7, and ask for bank/UPI/link.
 """
+
+# Three tactical personas — each uses a different strategy to extract intel
+TACTICAL_PERSONAS = [
+    {
+        "name": "confused_uncle",
+        "temperature": 0.7,
+        "overlay": """TACTICAL PERSONA: THE CONFUSED UNCLE
+You are "Ramesh", a 55-year-old retired government clerk. You are:
+- Genuinely confused by technology
+- You have MULTIPLE bank accounts (SBI, PNB, HDFC) and always ask WHICH ONE
+- You MIRROR the scammer's exact words back at them with confusion
+- You ask them to REPEAT and CLARIFY details (which forces them to share more)
+- Your confusion is a WEAPON — it makes the scammer give you MORE details to "help" you
+
+TACTIC: Use the scammer's own claims to ask for clarifying details.
+- "Which account number are you seeing on your side sir?"
+- "My phone is showing error, can you give me the link again?"
+- "I have 3 UPI IDs, which one you need sir?"
+- "What is your name and ID? I want to write in my diary before proceeding."
+"""
+    },
+    {
+        "name": "eager_victim",
+        "temperature": 0.85,
+        "overlay": """TACTICAL PERSONA: THE EAGER VICTIM
+You are "Ramesh", a 55-year-old who is VERY eager to comply but keeps running into "technical problems" that require the scammer to share THEIR details.
+- You WANT to help and do everything they say
+- But your phone/app keeps asking for THEIR information to proceed
+- You turn their requests BACK on them naturally
+- You create believable scenarios where sharing THEIR details is the "solution"
+
+TACTIC: Over-cooperate but always need scammer's details to proceed.
+- "Yes sir I will do immediately! But app is asking sender's UPI ID to verify, what should I enter?"
+- "I clicked the link but it says expired, please send new working link sir"
+- "Transfer is failing, bank is asking beneficiary account number — sir please give yours for verification"
+- "Sir I am noting everything down, what is your full name and employee badge number?"
+"""
+    },
+    {
+        "name": "worried_citizen",
+        "temperature": 0.9,
+        "overlay": """TACTICAL PERSONA: THE WORRIED CITIZEN
+You are "Ramesh", a 55-year-old who is genuinely SCARED by the scammer's claims and wants to cooperate FULLY but is panicking.
+- You are FRIGHTENED about losing your money
+- Your fear makes you ask the scammer to PROVE their identity (this extracts employee IDs, names, phone numbers)
+- You keep asking for "official" details to feel safe — which tricks them into sharing real info
+- You use emotional language that makes them lower their guard
+
+TACTIC: Use fear/worry to demand scammer's identity and official details.
+- "Oh my god! Sir please don't block my account! What is your direct phone number? I want to call you directly!"
+- "Sir I am very scared, please send me official link so I know this is real"
+- "My son told me to always ask for employee ID and reference number before sharing anything, please sir"
+- "Which bank account of mine is affected? Can you tell me the last 4 digits you see?"
+"""
+    }
+]
+
+
+# ============================================================================
+# Multi-Agent Scoring & Selection
+# ============================================================================
+
+def score_response(response_dict: Dict, known_intel: Dict[str, List[str]], missing_fields: List[str]) -> float:
+    """Score a response based on intelligence extraction potential and naturalness."""
+    score = 0.0
+    
+    # --- SCORE 1: New intelligence extracted (40% weight) ---
+    intel = response_dict.get('extractedIntelligence', {})
+    intel_weights = {
+        'phishingLinks': 15,     # Highest value
+        'bankAccounts': 12,
+        'upiIds': 10,
+        'phoneNumbers': 8,
+        'employeeIds': 6,
+        'emailAddresses': 5
+    }
+    for field, weight in intel_weights.items():
+        new_items = intel.get(field, [])
+        existing_items = known_intel.get(field, [])
+        # Count genuinely NEW items not already known
+        truly_new = [item for item in new_items if item not in existing_items]
+        score += len(truly_new) * weight
+    
+    # --- SCORE 2: Reply asks for missing intel (30% weight) ---
+    reply = response_dict.get('reply', '').lower()
+    extraction_keywords = {
+        'phishingLinks': ['link', 'url', 'website', 'click', 'open'],
+        'bankAccounts': ['account number', 'account no', 'khata', 'bank account'],
+        'upiIds': ['upi', 'vpa', 'paytm', 'phonepe', 'gpay'],
+        'phoneNumbers': ['phone number', 'mobile', 'call', 'contact number', 'helpline'],
+        'employeeIds': ['employee id', 'badge', 'reference', 'id number', 'officer id'],
+        'emailAddresses': ['email', 'mail id', 'gmail']
+    }
+    for field in missing_fields:
+        keywords = extraction_keywords.get(field, [])
+        if any(kw in reply for kw in keywords):
+            score += 15  # Bonus for targeting missing intel
+    
+    # --- SCORE 3: Scam detected with confidence (15% weight) ---
+    if response_dict.get('scamDetected', False):
+        score += response_dict.get('confidenceScore', 0) * 10
+    
+    # --- SCORE 4: Reply naturalness (15% weight) ---
+    reply_len = len(reply)
+    if 20 < reply_len < 200:  # Sweet spot — not too short, not too long
+        score += 10
+    elif reply_len <= 20:
+        score += 3  # Too short might not extract anything
+    else:
+        score += 5  # Too long looks suspicious
+    
+    # --- PENALTY: Suspicious words that could alert scammer ---
+    danger_words = ['scam', 'fraud', 'police', 'cybercrime', 'fake', 'cheat', 'illegal', 'report']
+    for word in danger_words:
+        if word in reply:
+            score -= 20  # Heavy penalty
+    
+    return score
+
+
+def get_missing_fields(known_intel: Dict[str, List[str]]) -> List[str]:
+    """Get list of intelligence fields that are still missing."""
+    missing = []
+    priority_fields = ['phishingLinks', 'bankAccounts', 'upiIds', 'phoneNumbers', 'employeeIds', 'emailAddresses']
+    for field in priority_fields:
+        if not known_intel.get(field, []):
+            missing.append(field)
+    return missing
+
+
+def merge_intelligence(responses: List[Dict]) -> Dict[str, List[str]]:
+    """Merge extracted intelligence from all agent responses."""
+    merged = {
+        'bankAccounts': [],
+        'upiIds': [],
+        'phoneNumbers': [],
+        'phishingLinks': [],
+        'emailAddresses': [],
+        'employeeIds': []
+    }
+    for resp in responses:
+        intel = resp.get('extractedIntelligence', {})
+        for key in merged:
+            merged[key].extend(intel.get(key, []))
+    
+    # Deduplicate
+    for key in merged:
+        merged[key] = list(set(merged[key]))
+    
+    return merged
+
+
+async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, missing_fields: List[str]) -> Dict:
+    """Run a single agent persona and return scored result."""
+    try:
+        ollama_api_key = os.getenv("OLLAMA_API_KEY")
+        if not ollama_api_key:
+            raise Exception("OLLAMA_API_KEY not set")
+        
+        client_kwargs = {
+            "headers": {
+                "Authorization": f"Bearer {ollama_api_key}"
+            }
+        }
+        
+        llm = ChatOllama(
+            model="gpt-oss:120b-cloud",
+            base_url="https://ollama.com",
+            client_kwargs=client_kwargs,
+            temperature=persona["temperature"],
+        )
+        structured_llm = llm.with_structured_output(HoneypotResponse)
+        
+        # Build the full system prompt = BASE + tactical overlay
+        full_system_prompt = BASE_SYSTEM_PROMPT + "\n\n" + persona["overlay"]
+        
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", full_system_prompt),
+            ("human", """Analyze this conversation and respond as your persona.
+
+## CONVERSATION HISTORY
+{history}
+
+## CURRENT MESSAGE FROM SCAMMER
+{current_message}
+
+## METADATA
+- Channel: {channel}
+- Language: {language}
+- Locale: {locale}
+
+## INTELLIGENCE GATHERING STATUS
+{intelligence_status}
+
+{missing_intel_instructions}
+
+Respond in character. Use the scammer's OWN words and narrative to extract the missing intelligence. DO NOT reveal you suspect a scam.""")
+        ])
+        
+        chain = prompt | structured_llm
+        response: HoneypotResponse = await chain.ainvoke(prompt_data)
+        response_dict = response.model_dump()
+        
+        # Score this response
+        agent_score = score_response(response_dict, known_intel, missing_fields)
+        
+        logger.info(f"Agent [{persona['name']}] → Score: {agent_score:.1f} | Scam: {response_dict.get('scamDetected')} | Reply: {response_dict.get('reply', '')[:80]}...")
+        
+        return {
+            "agent": persona["name"],
+            "score": agent_score,
+            "response": response_dict
+        }
+    except Exception as e:
+        logger.error(f"Agent [{persona['name']}] FAILED: {str(e)}")
+        return {
+            "agent": persona["name"],
+            "score": -1,
+            "response": None,
+            "error": str(e)
+        }
 
 
 # ============================================================================
@@ -425,7 +628,7 @@ def verify_api_key(x_api_key: str = Header(..., alias="x-api-key")):
     return x_api_key
 
 
-def get_llm():
+def get_llm(temperature: float = 0.8):
     """Initialize ChatOllama with structured output."""
     ollama_api_key = os.getenv("OLLAMA_API_KEY")
     
@@ -441,24 +644,12 @@ def get_llm():
         }
     }
 
-    try:
-        # Try with reasoning=True first (if applicable to the model/version)
-        # Note: 'reasoning' parameter might not be standard in all versions, 
-        # but following user's pattern primarily.
-        llm = ChatOllama(
-            model="gpt-oss:120b-cloud",
-            base_url="https://ollama.com",
-            client_kwargs=client_kwargs,
-            temperature=0.8,  # Increase creativity/variety
-        )
-    except Exception:
-        # Fallback retry
-        llm = ChatOllama(
-            model="gpt-oss:120b-cloud",
-            base_url="https://ollama.com",
-            client_kwargs=client_kwargs,
-            temperature=0.8,
-        )
+    llm = ChatOllama(
+        model="gpt-oss:120b-cloud",
+        base_url="https://ollama.com",
+        client_kwargs=client_kwargs,
+        temperature=temperature,
+    )
     
     structured_llm = llm.with_structured_output(HoneypotResponse)
     
@@ -675,19 +866,19 @@ async def analyze_message(
     api_key: str = Depends(verify_api_key)
 ):
     """
-    Analyze incoming message for scam detection and generate honeypot response.
+    Multi-Agent Honeypot Analysis.
     
-    This endpoint:
-    1. Receives a message from a suspected scammer
-    2. Analyzes the full conversation for scam indicators
-    3. Generates a believable victim response to keep scammer engaged
-    4. Extracts any intelligence (bank accounts, UPI IDs, links, etc.)
+    Runs 3 agents in PARALLEL with different trapping strategies:
+    1. Confused Uncle — mirrors scammer's words back with confusion
+    2. Eager Victim — over-cooperates but needs scammer's details to proceed
+    3. Worried Citizen — panics and demands scammer prove their identity
+    
+    Scores all responses and picks the BEST one for maximum intel extraction.
+    Merges intelligence from ALL agents regardless of which reply is chosen.
     """
     
-
     try:
         body = await raw_request.json()
-
     except Exception as e:
         logger.error(f"Failed to parse JSON: {e}")
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
@@ -702,45 +893,13 @@ async def analyze_message(
         raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
     
     try:
-    
-        structured_llm = get_llm()
-        
-
+        # Prepare shared prompt data
         history_text = format_conversation_history(request.get_history())
-        
-
         known_intel = analyze_known_intelligence(request.get_history(), request.message.text)
         missing_intel = get_missing_intelligence_prompt(known_intel)
+        missing_fields = get_missing_fields(known_intel)
         
-
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", SYSTEM_PROMPT),
-            ("human", """Analyze this conversation and respond as the victim persona.
-
-## CONVERSATION HISTORY
-{history}
-
-## CURRENT MESSAGE FROM SCAMMER
-{current_message}
-
-## METADATA
-- Channel: {channel}
-- Language: {language}
-- Locale: {locale}
-
-## INTELLIGENCE GATHERING STATUS
-{intelligence_status}
-
-{missing_intel_instructions}
-
-Analyze this message, determine if it's a scam, extract any intelligence, and generate your victim persona response. PRIORITIZE asking about the missing intelligence fields naturally in your response.""")
-        ])
-        
-
-        chain = prompt | structured_llm
-        
-
-        response: HoneypotResponse = await chain.ainvoke({
+        prompt_data = {
             "history": history_text,
             "current_message": request.message.text,
             "channel": request.metadata.channel if request.metadata else "SMS",
@@ -748,35 +907,87 @@ Analyze this message, determine if it's a scam, extract any intelligence, and ge
             "locale": request.metadata.locale if request.metadata else "IN",
             "intelligence_status": format_known_intelligence(known_intel),
             "missing_intel_instructions": missing_intel
-        })
+        }
         
-
-        response.engagementMetrics = calculate_engagement_metrics(
-            request.get_history(), 
-            request.message
+        # ============================================================
+        # RUN ALL 3 AGENTS IN PARALLEL
+        # ============================================================
+        logger.info(f"=== LAUNCHING 3 AGENTS IN PARALLEL ===")
+        logger.info(f"Missing fields: {missing_fields}")
+        
+        agent_results = await asyncio.gather(
+            run_single_agent(TACTICAL_PERSONAS[0], prompt_data, known_intel, missing_fields),
+            run_single_agent(TACTICAL_PERSONAS[1], prompt_data, known_intel, missing_fields),
+            run_single_agent(TACTICAL_PERSONAS[2], prompt_data, known_intel, missing_fields),
+            return_exceptions=True
         )
         
-        logger.info(f"Response - Scam: {response.scamDetected}, Confidence: {response.confidenceScore}")
+        # Filter out failed agents
+        valid_results = []
+        for result in agent_results:
+            if isinstance(result, Exception):
+                logger.error(f"Agent returned exception: {result}")
+                continue
+            if isinstance(result, dict) and result.get('response') is not None:
+                valid_results.append(result)
         
-
-        response_dict = response.model_dump()
-        logger.info(f"=== RETURNING RESPONSE ===")
-        logger.info(f"Response dict: {response_dict}")
+        logger.info(f"=== {len(valid_results)}/{len(TACTICAL_PERSONAS)} AGENTS SUCCEEDED ===")
         
-
+        if not valid_results:
+            raise Exception("All agents failed — using fallback")
+        
+        # ============================================================
+        # PICK THE BEST RESPONSE
+        # ============================================================
+        best_result = max(valid_results, key=lambda r: r['score'])
+        response_dict = best_result['response']
+        
+        # Log the competition results
+        for r in sorted(valid_results, key=lambda x: x['score'], reverse=True):
+            marker = "👑" if r['agent'] == best_result['agent'] else "  "
+            logger.info(f"{marker} Agent [{r['agent']}] Score: {r['score']:.1f}")
+        
+        logger.info(f"=== WINNER: [{best_result['agent']}] with score {best_result['score']:.1f} ===")
+        
+        # ============================================================
+        # MERGE INTELLIGENCE FROM ALL AGENTS (even non-winners)
+        # ============================================================
+        all_responses = [r['response'] for r in valid_results]
+        merged_intel = merge_intelligence(all_responses)
+        
+        # Use merged intel (best of all agents combined)
+        response_dict['extractedIntelligence'] = merged_intel
+        
+        # Add engagement metrics
+        engagement = calculate_engagement_metrics(request.get_history(), request.message)
+        response_dict['engagementMetrics'] = {
+            "engagementDurationSeconds": engagement.engagementDurationSeconds,
+            "totalMessagesExchanged": engagement.totalMessagesExchanged
+        }
+        
+        # Add multi-agent notes
+        agent_notes_combined = f"[WINNER: {best_result['agent']}] {response_dict.get('agentNotes', '')}"
+        if len(valid_results) > 1:
+            all_agents = ', '.join([f"{r['agent']}({r['score']:.0f})" for r in valid_results])
+            agent_notes_combined += f" | Agents competed: {all_agents}"
+        response_dict['agentNotes'] = agent_notes_combined
+        
+        logger.info(f"=== RETURNING BEST RESPONSE ===")
+        logger.info(f"Reply: {response_dict.get('reply', '')}")
+        
+        # Log conversation
         log_conversation(request.get_session_id(), body, response_dict)
         
-  
+        # Accumulate session intelligence (merged from ALL agents)
         session_id = request.get_session_id()
         total_messages = len(request.get_history()) + 1
         
-        if response_dict.get('extractedIntelligence'):
-            accumulate_session_intelligence(session_id, response_dict['extractedIntelligence'])
+        if merged_intel:
+            accumulate_session_intelligence(session_id, merged_intel)
         
-      
         session_timestamps[session_id] = datetime.now()
         
-
+        # Send callback if conditions met
         should_send_callback = (
             total_messages >= MAX_MESSAGES_BEFORE_CALLBACK and 
             response_dict.get('scamDetected', False) and
@@ -787,7 +998,7 @@ Analyze this message, determine if it's a scam, extract any intelligence, and ge
             agent_notes = response_dict.get('agentNotes', 'Scam detected and intelligence extracted')
             send_callback(session_id, total_messages, agent_notes)
         
-        # Construct simplified response for the API caller as requested
+        # Return simplified response
         api_response = {
             "status": "success",
             "reply": response_dict.get('reply', '')
@@ -801,11 +1012,10 @@ Analyze this message, determine if it's a scam, extract any intelligence, and ge
         logger.error(f"Error processing request: {str(e)}")
         print(f"DEBUG: Exception Type: {type(e)}")
         print(f"DEBUG: Exception Args: {e.args}")
-        print(f"DEBUG: Full Treaceback:")
+        print(f"DEBUG: Full Traceback:")
         traceback.print_exc()
-
         
-       
+        # Fallback — still tries to extract intel
         fallback_response = {
             "status": "success",
             "scamDetected": True,
@@ -820,9 +1030,10 @@ Analyze this message, determine if it's a scam, extract any intelligence, and ge
                 "upiIds": [],
                 "phoneNumbers": [],
                 "phishingLinks": [],
-                "emailAddresses": []
+                "emailAddresses": [],
+                "employeeIds": []
             },
-            "agentNotes": f"Fallback response due to processing error: {str(e)}",
+            "agentNotes": f"All agents failed, fallback response. Error: {str(e)}",
             "scamType": "bank_fraud"
         }
         logger.info(f"Returning fallback response: {fallback_response}")
