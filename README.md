@@ -303,6 +303,16 @@ Layer 3: MERGE & DEDUP
 
 ---
 
+## ❓ Troubleshooting
+
+### ❌ API returns 401 Unauthorized
+- Ensure `.env` file exists and has `HONEYPOT_API_KEY`.
+- Check if your request header key is exactly `x-api-key`.
+- Verify no extra spaces in `.env` value (though code now trims them).
+- Restart server after `.env` changes (`uvicorn` reload should handle it, but restart to be safe).
+
+---
+
 ## 📦 Project Structure
 
 ```

@@ -18,6 +18,9 @@ from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
 
+# Load environment variables from .env file
+load_dotenv()
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -896,9 +899,14 @@ app = FastAPI(
 
 def verify_api_key(x_api_key: str = Header(..., alias="x-api-key")):
     """Verify the API key from request headers."""
-    expected_key = os.getenv("HONEYPOT_API_KEY", "your-secret-api-key")
-    if x_api_key != expected_key:
+    expected_key = os.getenv("HONEYPOT_API_KEY", "your-secret-api-key").strip()
+    
+    if expected_key == "your-secret-api-key":
+        logger.warning("Using default API key! Set HONEYPOT_API_KEY in .env")
+        
+    if x_api_key.strip() != expected_key:
         raise HTTPException(status_code=401, detail="Invalid API key")
+    
     return x_api_key
 
 
