@@ -1,6 +1,8 @@
 # 🎤 Panel Q&A Guide — Agentic Honeypot (Multi-Agent System)
 
 > Yeh document panel ke liye taiyaar kiya gaya hai — isme har ek cheez detail me hai: agents kaun hai, environment kaise setup hai, comparison kaise hota hai, aur response kaise jaata hai.
+> 
+> **v2 Update:** Ab system me 3-tier execution hai — Structured Output → Raw Text Parsing → Smart Context-Aware Fallback. Koi bhi message pe static/repetitive reply NAHI aayega.
 
 ---
 
@@ -15,7 +17,8 @@
 | Response kaise jaata hai (Full Flow) | [Section 5](#5--response-kaise-jaata-hai-full-flow) |
 | Intelligence kaise extract hoti hai | [Section 6](#6--intelligence-extraction-pipeline) |
 | Session Management aur Callback | [Section 7](#7--session-management-aur-callback) |
-| Panel ke expected questions aur answers | [Section 8](#8--panel-ke-expected-questions-aur-answers) |
+| 3-Tier Execution Strategy (Anti-Hallucination) | [Section 8](#8--3-tier-execution-strategy) |
+| Panel ke expected questions aur answers | [Section 9](#9--panel-ke-expected-questions-aur-answers) |
 
 ---
 
@@ -332,15 +335,15 @@ STEP 1: Scammer ka message aata hai
 ├── Headers me x-api-key hota hai
 ├── Body me: sessionId, message, conversationHistory, metadata
 │
-STEP 2: API Key verify (line 623-628)
+STEP 2: API Key verify
 ├── x-api-key header check hota hai .env ke HONEYPOT_API_KEY se
 ├── Match nahi → 401 Unauthorized
 │
-STEP 3: Request parse (line 886-893)
+STEP 3: Request parse
 ├── JSON body → HoneypotRequest Pydantic model me convert
 ├── Session ID, message text, history extract
 │
-STEP 4: Pehle se kya pata hai? (line 897-899)
+STEP 4: Pehle se kya pata hai?
 ├── analyze_known_intelligence() — Regex se pura conversation scan
 │   Regex patterns:
 │   ├── Bank accounts: 16-digit numbers
@@ -355,33 +358,38 @@ STEP 4: Pehle se kya pata hai? (line 897-899)
 ├── get_missing_intelligence_prompt() — Kya NAHI mila abhi tak?
 ├── get_missing_fields() — Missing fields ki list
 │
-STEP 5: Prompt data ready (line 902-910)
+STEP 5: Prompt data ready
 ├── Conversation history formatted
 ├── Current scammer message
 ├── Channel, language, locale (metadata)
 ├── Already-captured intelligence status
 ├── Missing intel instructions
 │
-STEP 6: 🚀 3 AGENTS LAUNCH (line 918-923)
-├── asyncio.gather() — PARALLEL execution (ek saath, ek ke baad ek NAHI)
+STEP 6: 🚀 3 AGENTS LAUNCH — asyncio.gather()
+├── PARALLEL execution (ek saath, ek ke baad ek NAHI)
 │
-│   ┌─────────────────────────┐
-│   │ AGENT 1: confused_uncle │──→ LLM Call (temp=0.7)
-│   │ Prompt = BASE + overlay1│    Model: gpt-oss:120b-cloud
-│   │ (line 392-408)         │    Base URL: https://ollama.com
-│   └─────────────────────────┘    Auth: Bearer OLLAMA_API_KEY
-│                                   Output: HoneypotResponse (structured)
-│   ┌─────────────────────────┐
-│   │ AGENT 2: eager_victim   │──→ LLM Call (temp=0.85)
-│   │ Prompt = BASE + overlay2│    (Same model, same auth)
-│   │ (line 410-425)         │
-│   └─────────────────────────┘
-│
-│   ┌─────────────────────────┐
-│   │ AGENT 3: worried_citizen│──→ LLM Call (temp=0.9)
-│   │ Prompt = BASE + overlay3│    (Same model, same auth)
-│   │ (line 427-443)         │
-│   └─────────────────────────┘
+│   EACH AGENT HAS 3-TIER EXECUTION:
+│   ┌─────────────────────────────────────────────────────┐
+│   │ TIER 1: Structured Output (Pydantic)                │
+│   │ ├── LLM → with_structured_output(HoneypotResponse)  │
+│   │ ├── If valid reply (>10 chars) → ✅ USE THIS         │
+│   │ └── If fails → go to TIER 2                         │
+│   │                                                     │
+│   │ TIER 2: Raw Text + Manual JSON Extraction            │
+│   │ ├── LLM → raw text output                           │
+│   │ ├── Try: json.loads(raw_text)                       │
+│   │ ├── Try: regex find {.*} in text                    │
+│   │ ├── Try: use raw text as reply directly             │
+│   │ ├── If valid reply → ✅ USE THIS                     │
+│   │ └── If fails → go to TIER 3                         │
+│   │                                                     │
+│   │ TIER 3: Smart Context-Aware Fallback (NO LLM)        │
+│   │ ├── Reads scammer's ACTUAL message                  │
+│   │ ├── Detects: bank names, OTP, links, names, etc.    │
+│   │ ├── Picks response based on persona + context       │
+│   │ ├── 20+ pre-written context-aware replies           │
+│   │ └── ALWAYS SUCCEEDS ✅                               │
+│   └─────────────────────────────────────────────────────┘
 │
 │   ⏱️ Time: Same as 1 agent (parallel = no extra latency)
 │   3× API calls but 1× time
@@ -539,7 +547,52 @@ Message 18+:
 
 ---
 
-## 8. ❓ Panel Ke Expected Questions Aur Answers
+## 8. 🛡️ 3-Tier Execution Strategy
+
+### Problem (Pehle Kya Hota Tha)
+Agar LLM ka `with_structured_output()` fail hota tha → Agent fail → Fallback pe girta tha → **SAME hardcoded response** har baar. Scammer ko lagta tha bot hai.
+
+### Solution (Ab Kya Hota Hai)
+
+```
+Har agent ke andar 3 layers hain:
+
+TIER 1: Structured Output (Best Case)
+├── LLM se Pydantic model ke through structured JSON maangta hai
+├── Agar valid reply aata hai (>10 characters) → ✅ Direct use
+├── Fail hone pe → automatically TIER 2 pe jaata hai
+
+TIER 2: Raw Text + Manual JSON Extraction (Fallback A)
+├── Same LLM ko raw text me response maangta hai
+├── 3 methods se JSON extract karne ki koshish:
+│   ├── Method A: Direct json.loads()
+│   ├── Method B: Regex se {.*} find karke parse
+│   └── Method C: Raw text ko seedha reply ki tarah use
+├── Agar kuch bhi valid mila → ✅ Use
+├── Fail hone pe → TIER 3
+
+TIER 3: Smart Context-Aware Fallback (Guaranteed Success)
+├── LLM bilkul use NAHI hota
+├── Scammer ka message analyze hota hai:
+│   ├── Bank ka naam detect (SBI, PNB, HDFC...)
+│   ├── OTP/PIN/CVV keywords detect
+│   ├── Link/URL detect
+│   ├── Name detect ("Mr. Sharma")
+│   ├── Block/Suspend urgency detect
+│   └── Employee/Officer keywords detect
+├── Persona ke hisab se 20+ pre-written replies me se random pick
+├── KABHI FAIL NAHI HOTA ✅
+```
+
+### Key Benefits:
+- **No repetition** — 20+ dynamic responses × 3 personas = 60+ possible replies
+- **Context-aware** — Scammer ne "SBI" bola toh "SBI" wali reply aayegi, generic nahi
+- **Always succeeds** — Tier 3 me koi LLM call nahi, pure rule-based
+- **Random selection** — Same scam pe bhi alag replies aayengi
+
+---
+
+## 9. ❓ Panel Ke Expected Questions Aur Answers
 
 ### Q1: "Ye project kya karta hai?"
 **A:** "Ye ek AI-powered honeypot hai jo scam messages detect karta hai aur scammer ko engage karta hai unhi ki baaton me — taaki unse bank accounts, UPI IDs, phone numbers, phishing links extract ho sakein. 3 AI agents parallel me chalte hain, sabse best response choose hota hai aur scammer ko pata bhi nahi chalta."
@@ -567,7 +620,12 @@ Sabse zyada score wala jeetata hai."
 **A:** "`gpt-oss:120b-cloud` — ye 120 billion parameter ka model hai jo Ollama cloud pe hosted hai. LangChain ka `ChatOllama` connector use karte hain isko access karne ke liye. Structured output enforce karte hain `with_structured_output(HoneypotResponse)` se."
 
 ### Q7: "Agar LLM call fail ho jaaye toh?"
-**A:** "3 me se koi 1 ya 2 fail ho toh baaki successful agents se best choose hota hai. Agar teeno fail ho jaayein toh hardcoded fallback response jaata hai jo bhi intel extract karne ki koshish karta hai: 'Which account is this about? I have multiple. Also your name and employee ID please.' Conversation kabhi nahi tootega."
+**A:** "Har agent ke andar 3-tier fallback system hai:
+- **Tier 1:** Structured JSON output try karta hai (Pydantic se)
+- **Tier 2:** Agar woh fail ho toh raw text output leke manually JSON parse karta hai
+- **Tier 3:** Agar woh bhi fail ho toh ek smart fallback system hai jo LLM use NAHI karta — scammer ke message ko analyze karke (bank name, OTP, link detect karke) context-aware reply generate karta hai. 20+ pre-written replies hain jo random select hote hain.
+
+Result: Conversation KABHI nahi tootegi aur same response KABHI repeat nahi hoga."
 
 ### Q8: "Intelligence kaise merge hoti hai?"
 **A:** "Winner agent ki reply jaati hai scammer ko, BUT intelligence teeno agents se merge hoti hai. For example, agar Agent 1 ne phone number pakda, Agent 2 ne UPI ID, aur Agent 3 ne employee ID — toh final intel me teeno honge. `merge_intelligence()` function ye karta hai aur `set()` se duplicates remove karta hai."
@@ -596,13 +654,26 @@ Isse har agent alag tarah ka response deta hai — diversity aati hai."
 3. Har baar different opener ('Wait...', 'Actually...', 'One second...')
 4. Scammer ki apni baatein use hoti hain — natural lagta hai
 5. Words like 'scam', 'fraud' use karne pe heavy penalty
-6. 3 agents ki diversity se replies repetitive nahi lagte"
+6. 3 agents ki diversity se replies repetitive nahi lagte
+7. Smart fallback system me 60+ unique replies hain (20+ per persona) jo scammer ke message ke context pe depend karti hain — SAME response KABHI repeat nahi hota"
 
 ### Q14: "Ye project kaise unique hai?"
-**A:** "3 cheezein unique hain:
-1. **Multi-Agent** — 3 agents parallel, best select
+**A:** "4 cheezein unique hain:
+1. **Multi-Agent** — 3 agents parallel me chalte hain, best select hota hai
 2. **Uski Baaton Me Uljhana** — scammer ka apna narrative weapon ban jaata hai
-3. **Intel Merge** — winner ki reply jaati hai, but intel teeno se milta hai — koi data loss nahi hota"
+3. **Intel Merge** — winner ki reply jaati hai, but intel teeno se milta hai — koi data loss nahi hota
+4. **3-Tier Resilience** — Structured output fail ho toh raw text parse, woh bhi fail ho toh smart context-aware fallback — system KABHI nahi girta"
+
+### Q15: "Hallucination ya same response repeat hone ka problem kaise solve kiya?"
+**A:** "Pehle yeh problem tha — LLM ka structured output fail hota tha toh ek hardcoded message jaata tha har baar. Ab humne 3-tier execution implement kiya hai:
+- Tier 1 me structured output try hota hai
+- Fail hone pe Tier 2 me raw text parse hota hai
+- Woh bhi fail ho toh Tier 3 me ek rule-based engine hai jo scammer ke message ko analyze karta hai (bank detect, OTP detect, name detect) aur 20+ pre-written context-aware replies me se random choose karta hai
+- Har persona ke 20+ replies hain, toh total 60+ unique responses ho sakte hain
+- Random selection ensure karta hai ki same message pe bhi alag reply aaye"
+
+### Q16: "System kabhi completely fail ho sakta hai?"
+**A:** "Practically nahi. Agent level pe 3 tiers hain — Tier 3 me koi LLM call nahi hota, seedha rule-based hai toh fail hone ka koi chance nahi. Endpoint level pe bhi dynamic fallback hai. Aur absolute worst case me bhi ek last-resort static reply hai. 5 layers of protection hain."
 
 ---
 
