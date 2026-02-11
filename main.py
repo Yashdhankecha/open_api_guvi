@@ -538,8 +538,124 @@ def merge_intelligence(responses: List[Dict]) -> Dict[str, List[str]]:
     return merged
 
 
+def generate_smart_fallback(scammer_message: str, history_text: str, persona_name: str, known_intel: Dict) -> Dict:
+    """Generate a DYNAMIC fallback response based on scammer's actual message and persona.
+    This ensures we NEVER send the same static response twice."""
+    
+    msg_lower = scammer_message.lower()
+    
+    # Extract key elements from scammer's message to mirror back
+    mentioned_bank = None
+    for bank in ['sbi', 'pnb', 'hdfc', 'icici', 'axis', 'kotak', 'bob', 'rbi', 'bank']:
+        if bank in msg_lower:
+            mentioned_bank = bank.upper()
+            break
+    
+    mentioned_name = None
+    import re as _re
+    name_match = _re.search(r'(?:mr\.?|mrs\.?|this is|i am|my name is)\s+(\w+)', msg_lower)
+    if name_match:
+        mentioned_name = name_match.group(1).capitalize()
+    
+    has_link = 'http' in msg_lower or 'bit.ly' in msg_lower or 'link' in msg_lower or 'click' in msg_lower
+    has_otp = 'otp' in msg_lower or 'pin' in msg_lower or 'cvv' in msg_lower or 'code' in msg_lower
+    has_account = 'account' in msg_lower
+    has_block = 'block' in msg_lower or 'suspend' in msg_lower or 'urgent' in msg_lower
+    has_upi = 'upi' in msg_lower or '@' in msg_lower or 'paytm' in msg_lower or 'phonepe' in msg_lower
+    has_employee = 'employee' in msg_lower or 'officer' in msg_lower or 'security' in msg_lower
+    
+    # Build different responses based on persona and context
+    import random
+    
+    if persona_name == "confused_uncle":
+        options = []
+        if mentioned_bank and has_account:
+            options.append(f"Arre sir, {mentioned_bank} ka toh mera 2 account hai — savings aur pension wala. Konsa account number bol rahe ho? Last 4 digit batao na apni side se?")
+            options.append(f"Wait wait, {mentioned_bank}? Mera toh PNB me bhi account hai. Aap konsa dekh rahe ho apni screen pe? Account number bata do na?")
+        if has_otp:
+            options.append("OTP? Arre haan aaya tha ek message... 4... 7... wait, screen dark ho gayi. Kya aap apna phone number do? Main call karke batata hun OTP")
+            options.append("Sir OTP wala message toh aa gaya lekin bahut saare numbers hai usme... aap apna direct number do na, main call karke bata dunga")
+        if has_link:
+            options.append("Link pe click kiya lekin error aa raha hai — 'page not found' likh raha hai. Ek baar phir se bhejo na pura link? Ya phir apna email do, wahan se try karta hun")
+            options.append("Sir link khul nahi raha, mera phone me kuch problem hai. Kya aap apna direct number de sakte ho? Main apne bete ke phone se try karta hun")
+        if has_block and not options:
+            options.append(f"{'Haan ' + mentioned_name + ' sir' if mentioned_name else 'Sir'}, mujhe bahut tension ho rahi hai! Lekin konsa account block hoga? Mera toh SBI, PNB dono me hai. Aap apna employee ID bata do, main note kar leta hun")
+        if has_employee and mentioned_name:
+            options.append(f"{mentioned_name} sir, aapka ID note kar liya. Lekin mera phone me app nahi khul raha. Aap apna direct phone number do na, main call karta hun")
+        if not options:
+            options.append("Sir samajh nahi aaya, thoda aur detail me batao na? Mera phone bhi bahut slow chal raha hai. Aapka contact number do, main call karke baat karta hun")
+            options.append("Arre sir ek minute, mujhe pehle samajhna padega. Aap konsi bank se bol rahe ho? Apna naam aur ID number bata do, main diary me likh leta hun")
+        
+    elif persona_name == "eager_victim":
+        options = []
+        if has_account and mentioned_bank:
+            options.append(f"Haan haan sir, {mentioned_bank} account! Main abhi app open karta hun. Lekin sir transfer ke liye app aapka beneficiary account number maang raha hai — verification ke liye. Please share karo na?")
+            options.append(f"Yes sir {mentioned_bank}! Main ready hun. Lekin app me 'sender verification' likh raha hai — aapka UPI ID enter karna padega. Kya hai aapka UPI?")
+        if has_otp:
+            options.append("Sir haan OTP aaya hai! Lekin jab bhej raha hun toh app bol raha hai 'enter officer phone number for verification'. Aapka number kya hai sir?")
+            options.append("OTP bhejne ke liye app me ek form fill karna pad raha hai — usme officer ka email ID maang raha hai. Please batao na sir?")
+        if has_link:
+            options.append("Sir link click kiya! Lekin woh page pe 'enter your reference ID' likh raha hai. Aapne koi reference number diya tha kya? Ya apna employee ID dal dun?")
+            options.append("Link pe gaya sir lekin expired bol raha hai. Please new link bhejo? Ya direct apna UPI ID do, main wahan se try karta hun")
+        if has_upi:
+            options.append("Sir main UPI se transfer karne ko ready hun! Lekin app me 'beneficiary UPI ID' maang raha hai verify karne ke liye. Aapka UPI kya hai? Main dal deta hun")
+        if not options:
+            options.append("Haan sir main ready hun! Bas ek problem hai — app me ek form aaya hai jisme aapka full name, employee ID, aur contact number fill karna hai. Batao na sir jaldi!")
+            options.append("Sir definitely karunga! Lekin mera phone update maang raha hai, thoda time lagega. Tab tak aap apna direct number do na, main ladke ke phone se call karta hun")
+        
+    elif persona_name == "worried_citizen":
+        options = []
+        if has_block:
+            options.append(f"{'Oh god ' + mentioned_name + ' sir!' if mentioned_name else 'Oh god sir!'} Please mera account block mat karo! Mera saari pension usme hai! Aapka direct phone number do na sir, main abhi call karke sab kar dunga! Please sir!")
+            options.append("Sir please please block mat karo! Mujhe bahut darr lag raha hai! Aap mujhe apna official email bhejo proof ke saath, mera beta verify karega aur turant sab kar denge!")
+        if has_otp:
+            options.append("Sir main OTP de dunga lekin mujhe bahut darr lag raha hai — kahin fraud toh nahi? Please apna employee ID aur official phone number do, main verify karke turant bhej dunga!")
+            options.append("Sir mera haath kaanp rahe hain! OTP bhejne se pehle please apna full name aur department batao? Mera beta bola hai hamesha note karo officer ki details!")
+        if has_link:
+            options.append("Sir link pe click karne se pehle — mera bete ne bola hai kabhi bhi link pe click karne se pehle officer ka ID aur direct phone number le lo. Please sir, mujhe safe feel karna hai!")
+            options.append("Sir main link kholne se darr raha hun! Kya aap apna official email se mujhe bhej sakte ho? Tabhi mujhe yakin aayega ki real hai. Please sir meri help karo!")
+        if has_employee and mentioned_name:
+            options.append(f"{mentioned_name} sir, aapka ID note kar liya. Lekin mujhe abhi bhi darr lag raha hai. Kya aap mujhe call kar sakte ho apna official number se? Tabhi main OTP dunga!")
+        if not options:
+            options.append("Sir mujhe bahut darr lag raha hai! Kya ho raha hai? Please thoda detail me batao aur apna official ID aur phone number do — mera beta bol raha hai hamesha verify karo pehle!")
+            options.append("Oh no sir! Main bahut pareshaan hun! Please pehle apna full name, employee ID, aur official email bhejo. Mera beta bina verify kiye kuch bhi karne se mana karta hai!")
+    else:
+        options = [
+            "Sir thoda samjhao na detail me? Mujhe pata nahi kya karna hai. Aap apna number do, main call karta hun",
+            "Sir mujhe confused ho raha hai. Aap apna naam aur ID bata do, main note kar leta hun"
+        ]
+    
+    reply = random.choice(options)
+    
+    return {
+        "status": "success",
+        "scamDetected": True,
+        "confidenceScore": 0.8,
+        "reply": reply,
+        "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 0},
+        "extractedIntelligence": {
+            "bankAccounts": known_intel.get('bankAccounts', []),
+            "upiIds": known_intel.get('upiIds', []),
+            "phoneNumbers": known_intel.get('phoneNumbers', []),
+            "phishingLinks": known_intel.get('phishingLinks', []),
+            "emailAddresses": known_intel.get('emailAddresses', []),
+            "employeeIds": known_intel.get('employeeIds', [])
+        },
+        "agentNotes": f"Smart fallback ({persona_name}) — LLM structured output failed, using context-aware response",
+        "scamType": "bank_fraud"
+    }
+
+
 async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, missing_fields: List[str]) -> Dict:
-    """Run a single agent persona and return scored result."""
+    """Run a single agent persona and return scored result.
+    
+    Strategy:
+    1. Try structured output (Pydantic) first
+    2. If that fails, try RAW text output + manual JSON extraction
+    3. If that also fails, generate a smart context-aware fallback
+    """
+    agent_name = persona['name']
+    
     try:
         ollama_api_key = os.getenv("OLLAMA_API_KEY")
         if not ollama_api_key:
@@ -551,20 +667,35 @@ async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, 
             }
         }
         
-        llm = ChatOllama(
-            model="gpt-oss:120b-cloud",
-            base_url="https://ollama.com",
-            client_kwargs=client_kwargs,
-            temperature=persona["temperature"],
-        )
-        structured_llm = llm.with_structured_output(HoneypotResponse)
-        
         # Build the full system prompt = BASE + tactical overlay
         full_system_prompt = BASE_SYSTEM_PROMPT + "\n\n" + persona["overlay"]
         
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", full_system_prompt),
-            ("human", """Analyze this conversation and respond as your persona.
+        # Add explicit JSON format instructions to help the LLM
+        json_format_hint = """
+
+RESPONSE FORMAT — You MUST respond with valid JSON matching this exact structure:
+{
+  "status": "success",
+  "scamDetected": true,
+  "confidenceScore": 0.85,
+  "reply": "Your in-character response to the scammer here",
+  "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 0},
+  "extractedIntelligence": {
+    "bankAccounts": [],
+    "upiIds": [],
+    "phoneNumbers": [],
+    "phishingLinks": [],
+    "emailAddresses": [],
+    "employeeIds": []
+  },
+  "agentNotes": "Brief note about what you observed",
+  "scamType": "bank_fraud"
+}
+
+IMPORTANT: The "reply" field is the MOST important. It must be a short, natural, in-character response that references the scammer's SPECIFIC message. Do NOT give generic responses.
+"""
+        
+        human_message = """Analyze this conversation and respond as your persona.
 
 ## CONVERSATION HISTORY
 {history}
@@ -582,31 +713,174 @@ async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, 
 
 {missing_intel_instructions}
 
-Respond in character. Use the scammer's OWN words and narrative to extract the missing intelligence. DO NOT reveal you suspect a scam.""")
-        ])
+CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Your reply MUST directly reference what THEY said. Use THEIR specific words, names, and claims in your response. DO NOT give a generic reply. DO NOT reveal you suspect a scam."""
         
-        chain = prompt | structured_llm
-        response: HoneypotResponse = await chain.ainvoke(prompt_data)
-        response_dict = response.model_dump()
+        # ============================================================
+        # ATTEMPT 1: Structured output via Pydantic
+        # ============================================================
+        try:
+            llm = ChatOllama(
+                model="gpt-oss:120b-cloud",
+                base_url="https://ollama.com",
+                client_kwargs=client_kwargs,
+                temperature=persona["temperature"],
+            )
+            structured_llm = llm.with_structured_output(HoneypotResponse)
+            
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", full_system_prompt + json_format_hint),
+                ("human", human_message)
+            ])
+            
+            chain = prompt | structured_llm
+            response: HoneypotResponse = await chain.ainvoke(prompt_data)
+            response_dict = response.model_dump()
+            
+            # Validate the reply isn't empty or generic
+            reply = response_dict.get('reply', '')
+            if reply and len(reply) > 10:
+                agent_score = score_response(response_dict, known_intel, missing_fields)
+                logger.info(f"Agent [{agent_name}] STRUCTURED ✅ → Score: {agent_score:.1f} | Reply: {reply[:80]}...")
+                return {
+                    "agent": agent_name,
+                    "score": agent_score,
+                    "response": response_dict
+                }
+            else:
+                logger.warning(f"Agent [{agent_name}] structured output had empty reply, trying raw...")
+                raise Exception("Empty reply from structured output")
+                
+        except Exception as e1:
+            logger.warning(f"Agent [{agent_name}] structured output failed: {str(e1)[:200]}. Trying raw text...")
         
-        # Score this response
-        agent_score = score_response(response_dict, known_intel, missing_fields)
+        # ============================================================
+        # ATTEMPT 2: Raw text output + manual JSON extraction
+        # ============================================================
+        try:
+            llm_raw = ChatOllama(
+                model="gpt-oss:120b-cloud",
+                base_url="https://ollama.com",
+                client_kwargs=client_kwargs,
+                temperature=persona["temperature"],
+            )
+            
+            # Simpler prompt asking for just the reply
+            raw_prompt = ChatPromptTemplate.from_messages([
+                ("system", full_system_prompt),
+                ("human", human_message + """
+
+Respond with ONLY a JSON object. The most important field is "reply" — your in-character response to the scammer.
+Example: {"scamDetected": true, "confidenceScore": 0.85, "reply": "your response here", "scamType": "bank_fraud"}""")
+            ])
+            
+            chain_raw = raw_prompt | llm_raw
+            raw_response = await chain_raw.ainvoke(prompt_data)
+            raw_text = raw_response.content if hasattr(raw_response, 'content') else str(raw_response)
+            
+            logger.info(f"Agent [{agent_name}] RAW response: {raw_text[:300]}...")
+            
+            # Try to extract JSON from the raw text
+            response_dict = None
+            
+            # Method A: Direct JSON parse
+            try:
+                import json as _json
+                response_dict = _json.loads(raw_text)
+            except:
+                pass
+            
+            # Method B: Find JSON block in text
+            if not response_dict:
+                json_match = re.search(r'\{[\s\S]*\}', raw_text)
+                if json_match:
+                    try:
+                        response_dict = json.loads(json_match.group())
+                    except:
+                        pass
+            
+            # Method C: Extract just the reply text
+            if not response_dict:
+                # If we can't parse JSON, just use the raw text as the reply
+                clean_text = raw_text.strip()
+                # Remove any JSON-like wrapper
+                clean_text = re.sub(r'^[^a-zA-Z]*', '', clean_text)
+                clean_text = re.sub(r'[^a-zA-Z.!?]*$', '', clean_text)
+                
+                if clean_text and len(clean_text) > 10:
+                    response_dict = {
+                        "status": "success",
+                        "scamDetected": True,
+                        "confidenceScore": 0.8,
+                        "reply": clean_text[:300],
+                        "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 0},
+                        "extractedIntelligence": {
+                            "bankAccounts": [], "upiIds": [], "phoneNumbers": [],
+                            "phishingLinks": [], "emailAddresses": [], "employeeIds": []
+                        },
+                        "agentNotes": f"Raw text extraction ({agent_name})",
+                        "scamType": "bank_fraud"
+                    }
+            
+            if response_dict and response_dict.get('reply'):
+                # Ensure all required fields exist
+                response_dict.setdefault('status', 'success')
+                response_dict.setdefault('scamDetected', True)
+                response_dict.setdefault('confidenceScore', 0.8)
+                response_dict.setdefault('engagementMetrics', {"engagementDurationSeconds": 0, "totalMessagesExchanged": 0})
+                response_dict.setdefault('extractedIntelligence', {
+                    "bankAccounts": [], "upiIds": [], "phoneNumbers": [],
+                    "phishingLinks": [], "emailAddresses": [], "employeeIds": []
+                })
+                response_dict.setdefault('agentNotes', f'Raw output parsed ({agent_name})')
+                response_dict.setdefault('scamType', 'bank_fraud')
+                
+                agent_score = score_response(response_dict, known_intel, missing_fields)
+                logger.info(f"Agent [{agent_name}] RAW PARSED ✅ → Score: {agent_score:.1f} | Reply: {response_dict['reply'][:80]}...")
+                return {
+                    "agent": agent_name,
+                    "score": agent_score,
+                    "response": response_dict
+                }
+            else:
+                raise Exception("Could not extract valid reply from raw output")
+                
+        except Exception as e2:
+            logger.warning(f"Agent [{agent_name}] raw text also failed: {str(e2)[:200]}. Using smart fallback...")
         
-        logger.info(f"Agent [{persona['name']}] → Score: {agent_score:.1f} | Scam: {response_dict.get('scamDetected')} | Reply: {response_dict.get('reply', '')[:80]}...")
+        # ============================================================
+        # ATTEMPT 3: Smart context-aware fallback
+        # ============================================================
+        scammer_msg = prompt_data.get('current_message', '')
+        history_text = prompt_data.get('history', '')
+        fallback_response = generate_smart_fallback(scammer_msg, history_text, agent_name, known_intel)
+        fallback_score = score_response(fallback_response, known_intel, missing_fields)
+        
+        logger.info(f"Agent [{agent_name}] SMART FALLBACK ✅ → Score: {fallback_score:.1f} | Reply: {fallback_response['reply'][:80]}...")
         
         return {
-            "agent": persona["name"],
-            "score": agent_score,
-            "response": response_dict
+            "agent": agent_name,
+            "score": fallback_score,
+            "response": fallback_response
         }
+        
     except Exception as e:
-        logger.error(f"Agent [{persona['name']}] FAILED: {str(e)}")
-        return {
-            "agent": persona["name"],
-            "score": -1,
-            "response": None,
-            "error": str(e)
-        }
+        logger.error(f"Agent [{agent_name}] COMPLETELY FAILED: {str(e)}")
+        # Even the last resort — generate a basic smart fallback
+        try:
+            scammer_msg = prompt_data.get('current_message', '')
+            fb = generate_smart_fallback(scammer_msg, '', agent_name, known_intel)
+            return {
+                "agent": agent_name,
+                "score": 0.1,
+                "response": fb
+            }
+        except:
+            return {
+                "agent": agent_name,
+                "score": -1,
+                "response": None,
+                "error": str(e)
+            }
 
 
 # ============================================================================
@@ -1015,28 +1289,32 @@ async def analyze_message(
         print(f"DEBUG: Full Traceback:")
         traceback.print_exc()
         
-        # Fallback — still tries to extract intel
-        fallback_response = {
-            "status": "success",
-            "scamDetected": True,
-            "confidenceScore": 0.75,
-            "reply": "Oh no, that sounds serious! Can you please tell me which account this is about? I have multiple bank accounts. Also, what is your name and employee ID so I can note it down?",
-            "engagementMetrics": {
-                "engagementDurationSeconds": 0,
-                "totalMessagesExchanged": len(request.get_history()) + 1
-            },
-            "extractedIntelligence": {
-                "bankAccounts": [],
-                "upiIds": [],
-                "phoneNumbers": [],
-                "phishingLinks": [],
-                "emailAddresses": [],
-                "employeeIds": []
-            },
-            "agentNotes": f"All agents failed, fallback response. Error: {str(e)}",
-            "scamType": "bank_fraud"
-        }
-        logger.info(f"Returning fallback response: {fallback_response}")
+        # Dynamic fallback — uses scammer's actual message for context-aware response
+        try:
+            scammer_msg = request.message.text if request else "unknown"
+            known = analyze_known_intelligence(request.get_history(), scammer_msg) if request else {}
+            import random as _rand
+            persona_pick = _rand.choice(["confused_uncle", "eager_victim", "worried_citizen"])
+            fallback_response = generate_smart_fallback(scammer_msg, "", persona_pick, known)
+            fallback_response["engagementMetrics"]["totalMessagesExchanged"] = len(request.get_history()) + 1
+            fallback_response["agentNotes"] = f"Endpoint-level fallback ({persona_pick}). Error: {str(e)[:200]}"
+        except:
+            # Absolute last resort
+            fallback_response = {
+                "status": "success",
+                "scamDetected": True,
+                "confidenceScore": 0.75,
+                "reply": "Sir ek minute, mera screen hang ho gaya. Aap apna naam aur employee ID bata do, main note kar leta hun. Phir aage badhte hain.",
+                "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 1},
+                "extractedIntelligence": {
+                    "bankAccounts": [], "upiIds": [], "phoneNumbers": [],
+                    "phishingLinks": [], "emailAddresses": [], "employeeIds": []
+                },
+                "agentNotes": f"Last resort fallback. Error: {str(e)}",
+                "scamType": "bank_fraud"
+            }
+        
+        logger.info(f"Returning fallback response: {fallback_response['reply'][:100]}")
         from fastapi.responses import JSONResponse
         return JSONResponse(content=fallback_response)
 
