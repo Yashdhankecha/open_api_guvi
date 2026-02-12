@@ -745,23 +745,23 @@ async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, 
         json_format_hint = """
 
 RESPONSE FORMAT — You MUST respond with valid JSON matching this exact structure:
-{
+{{
   "status": "success",
   "scamDetected": true,
   "confidenceScore": 0.85,
   "reply": "Your in-character response to the scammer here",
-  "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 0},
-  "extractedIntelligence": {
+  "engagementMetrics": {{ "engagementDurationSeconds": 0, "totalMessagesExchanged": 0 }},
+  "extractedIntelligence": {{
     "bankAccounts": [],
     "upiIds": [],
     "phoneNumbers": [],
     "phishingLinks": [],
     "emailAddresses": [],
     "employeeIds": []
-  },
+  }},
   "agentNotes": "Brief note about what you observed",
   "scamType": "bank_fraud"
-}
+}}
 
 IMPORTANT: The "reply" field is the MOST important. It must be a short, natural, in-character response that references the scammer's SPECIFIC message. Do NOT give generic responses.
 """
@@ -841,7 +841,7 @@ CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Your reply MUST directly
                 ("human", human_message + """
 
 Respond with ONLY a JSON object. The most important field is "reply" — your in-character response to the scammer.
-Example: {"scamDetected": true, "confidenceScore": 0.85, "reply": "your response here", "scamType": "bank_fraud"}""")
+Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your response here", "scamType": "bank_fraud" }}""")
             ])
             
             chain_raw = raw_prompt | llm_raw
