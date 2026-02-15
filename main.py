@@ -11,7 +11,8 @@ import re
 import requests
 from datetime import datetime
 from typing import List, Optional, Any, Dict, Union
-from fastapi import FastAPI, HTTPException, Header, Depends, Request
+from fastapi import FastAPI, HTTPException, Header, Depends, Request 
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field, ConfigDict
 from langchain_ollama import ChatOllama
@@ -744,23 +745,23 @@ async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, 
         json_format_hint = """
 
 RESPONSE FORMAT — You MUST respond with valid JSON matching this exact structure:
-{
+{{
   "status": "success",
   "scamDetected": true,
   "confidenceScore": 0.85,
   "reply": "Your in-character response to the scammer here",
-  "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 0},
-  "extractedIntelligence": {
+  "engagementMetrics": {{ "engagementDurationSeconds": 0, "totalMessagesExchanged": 0 }},
+  "extractedIntelligence": {{
     "bankAccounts": [],
     "upiIds": [],
     "phoneNumbers": [],
     "phishingLinks": [],
     "emailAddresses": [],
     "employeeIds": []
-  },
+  }},
   "agentNotes": "Brief note about what you observed",
   "scamType": "bank_fraud"
-}
+}}
 
 IMPORTANT: The "reply" field is the MOST important. It must be a short, natural, in-character response that references the scammer's SPECIFIC message. Do NOT give generic responses.
 """
@@ -840,7 +841,7 @@ CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Your reply MUST directly
                 ("human", human_message + """
 
 Respond with ONLY a JSON object. The most important field is "reply" — your in-character response to the scammer.
-Example: {"scamDetected": true, "confidenceScore": 0.85, "reply": "your response here", "scamType": "bank_fraud"}""")
+Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your response here", "scamType": "bank_fraud" }}""")
             ])
             
             chain_raw = raw_prompt | llm_raw
@@ -963,8 +964,16 @@ app = FastAPI(
     title="Agentic Honeypot API",
     description="AI-powered scam detection and intelligence extraction system",
     version="1.0.0"
+    
 )
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 def verify_api_key(
     x_api_key: Optional[str] = Header(None, alias="x-api-key"),
@@ -1331,7 +1340,10 @@ async def analyze_message(
             "totalMessagesExchanged": engagement.totalMessagesExchanged
         }
         
-        # Add multi-agent notes
+        # Save the LLM's original agent notes before wrapping with competition info
+        original_agent_notes = response_dict.get('agentNotes', 'Scam detected and intelligence extracted')
+        
+        # Add multi-agent notes (for internal logging only)
         agent_notes_combined = f"[WINNER: {best_result['agent']}] {response_dict.get('agentNotes', '')}"
         if len(valid_results) > 1:
             all_agents = ', '.join([f"{r['agent']}({r['score']:.0f})" for r in valid_results])
@@ -1361,8 +1373,7 @@ async def analyze_message(
         )
         
         if should_send_callback:
-            agent_notes = response_dict.get('agentNotes', 'Scam detected and intelligence extracted')
-            send_callback(session_id, total_messages, agent_notes)
+            send_callback(session_id, total_messages, original_agent_notes)
         
         # Return simplified response
         api_response = {
