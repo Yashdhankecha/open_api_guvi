@@ -19,10 +19,17 @@ import logging
 import traceback
 import requests
 from datetime import datetime
+<<<<<<< HEAD
 from typing import List, Optional, Dict, Union
 
 from fastapi import FastAPI, HTTPException, Header, Depends, Request
 from fastapi.responses import JSONResponse, PlainTextResponse
+=======
+from typing import List, Optional, Any, Dict, Union
+from fastapi import FastAPI, HTTPException, Header, Depends, Request 
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
+>>>>>>> 131eeb48fd0500a3b0c4ee5a95cf75ba1af109e0
 from pydantic import BaseModel, Field, ConfigDict
 from langchain_ollama import ChatOllama
 from langchain_core.prompts import ChatPromptTemplate
@@ -278,7 +285,7 @@ def send_callback(session_id: str, total_messages: int, agent_notes: str):
         "sessionId": session_id,
         "status": "success",
         "scamDetected": True,
-        "scamType": "bank_fraud",
+        #"scamType": "bank_fraud",
         "extractedIntelligence": {
             "bankAccounts": intel.get("bankAccounts", []),
             "upiIds": intel.get("upiIds", []),
@@ -286,10 +293,10 @@ def send_callback(session_id: str, total_messages: int, agent_notes: str):
             "phishingLinks": intel.get("phishingLinks", []),
             "emailAddresses": intel.get("emailAddresses", []),
         },
-        "engagementMetrics": {
-            "totalMessagesExchanged": total_messages,
-            "engagementDurationSeconds": max(duration, 1),
-        },
+       # "engagementMetrics": {
+        #    "totalMessagesExchanged": total_messages,
+        #   "engagementDurationSeconds": max(duration, 1),
+        #},
         "agentNotes": agent_notes,
     }
 
@@ -672,19 +679,31 @@ async def run_single_agent(
 
         json_hint = """
 RESPONSE FORMAT — You MUST respond with valid JSON matching this exact structure:
-{
+{{
   "status": "success",
   "scamDetected": true,
   "confidenceScore": 0.85,
   "reply": "Your in-character response to the scammer here",
+<<<<<<< HEAD
   "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 0},
   "extractedIntelligence": {
     "bankAccounts": [], "upiIds": [], "phoneNumbers": [],
     "phishingLinks": [], "emailAddresses": [], "employeeIds": []
   },
+=======
+  "engagementMetrics": {{ "engagementDurationSeconds": 0, "totalMessagesExchanged": 0 }},
+  "extractedIntelligence": {{
+    "bankAccounts": [],
+    "upiIds": [],
+    "phoneNumbers": [],
+    "phishingLinks": [],
+    "emailAddresses": [],
+    "employeeIds": []
+  }},
+>>>>>>> 131eeb48fd0500a3b0c4ee5a95cf75ba1af109e0
   "agentNotes": "Brief note about what you observed",
   "scamType": "bank_fraud"
-}
+}}
 
 IMPORTANT: The "reply" field is MOST important. Must be a short, natural, in-character response that references the scammer's SPECIFIC message.
 """
@@ -746,8 +765,16 @@ CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Your reply MUST directly
                 temperature=persona["temperature"],
             )
             raw_prompt = ChatPromptTemplate.from_messages([
+<<<<<<< HEAD
                 ("system", full_system),
                 ("human", human_msg + '\n\nRespond with ONLY a JSON object. Most important field is "reply".\nExample: {"scamDetected": true, "confidenceScore": 0.85, "reply": "your response", "scamType": "bank_fraud"}'),
+=======
+                ("system", full_system_prompt),
+                ("human", human_message + """
+
+Respond with ONLY a JSON object. The most important field is "reply" — your in-character response to the scammer.
+Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your response here", "scamType": "bank_fraud" }}""")
+>>>>>>> 131eeb48fd0500a3b0c4ee5a95cf75ba1af109e0
             ])
             chain_raw = raw_prompt | llm_raw
             raw_resp = await chain_raw.ainvoke(prompt_data)
@@ -799,6 +826,7 @@ CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Your reply MUST directly
         except Exception as e2:
             logger.warning(f"[{agent_name}] raw failed: {str(e2)[:200]}")
 
+<<<<<<< HEAD
         # ── ATTEMPT 3: Smart fallback ────────────────────────────────────
         fb = generate_smart_fallback(
             prompt_data.get("current_message", ""),
@@ -806,6 +834,64 @@ CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Your reply MUST directly
             agent_name,
             known_intel,
             prompt_data.get("language", "English"),
+=======
+
+# ============================================================================
+# FastAPI Application
+# ============================================================================
+
+app = FastAPI(
+    title="Agentic Honeypot API",
+    description="AI-powered scam detection and intelligence extraction system",
+    version="1.0.0"
+    
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+def verify_api_key(
+    x_api_key: Optional[str] = Header(None, alias="x-api-key"),
+    apikey: Optional[str] = None
+):
+    """
+    Verify the API key from request headers OR query parameter.
+    Priority: Header > Query Param
+    """
+    received_key = x_api_key or apikey
+    expected_key = os.getenv("HONEYPOT_API_KEY", "").strip()
+    
+    # DEBUG LOGGING
+    logger.info(f"AUTH DEBUG: Header='{x_api_key}', Query='{apikey}'")
+    
+    if not received_key:
+        logger.error("AUTH FAILED: No API key provided in header or query")
+        raise HTTPException(status_code=401, detail="Missing API key. Use header 'x-api-key' or query param 'apikey'")
+        
+    if not expected_key or expected_key == "your-secret-api-key":
+        logger.warning("AUTH WARNING: Using insecure/default server key! Check .env loading.")
+        
+    if received_key.strip() != expected_key:
+        logger.error(f"AUTH FAILED: Key mismatch. Received: '{received_key[:5]}...', Expected: '{expected_key[:5]}...'")
+        raise HTTPException(status_code=401, detail="Invalid API key")
+    
+    return received_key
+
+
+def get_llm(temperature: float = 0.8):
+    """Initialize ChatOllama with structured output."""
+    ollama_api_key = os.getenv("OLLAMA_API_KEY")
+    
+    if not ollama_api_key:
+        raise HTTPException(
+            status_code=500, 
+            detail="OLLAMA_API_KEY environment variable not set"
+>>>>>>> 131eeb48fd0500a3b0c4ee5a95cf75ba1af109e0
         )
         sc = score_response(fb, known_intel, missing_fields)
         logger.info(f"[{agent_name}] FALLBACK ✅ Score={sc:.1f}")
@@ -896,9 +982,175 @@ def verify_api_key(
     received = x_api_key or apikey
     expected = os.getenv("HONEYPOT_API_KEY", "").strip()
 
+<<<<<<< HEAD
     if not received:
         logger.error("AUTH: No API key provided")
         raise HTTPException(status_code=401, detail="Missing API key")
+=======
+    try:
+        request = HoneypotRequest(**body)
+        logger.info(f"Parsed - Session: {request.get_session_id()}")
+        logger.info(f"Message: {request.message.text}")
+        logger.info(f"History length: {len(request.get_history())}")
+    except Exception as e:
+        logger.error(f"Failed to parse request model: {e}")
+        raise HTTPException(status_code=422, detail=f"Validation error: {str(e)}")
+    
+    try:
+        # Prepare shared prompt data
+        history_text = format_conversation_history(request.get_history())
+        known_intel = analyze_known_intelligence(request.get_history(), request.message.text)
+        missing_intel = get_missing_intelligence_prompt(known_intel)
+        missing_fields = get_missing_fields(known_intel)
+        
+        prompt_data = {
+            "history": history_text,
+            "current_message": request.message.text,
+            "channel": request.metadata.channel if request.metadata else "SMS",
+            "language": request.metadata.language if request.metadata else "English",
+            "locale": request.metadata.locale if request.metadata else "IN",
+            "intelligence_status": format_known_intelligence(known_intel),
+            "missing_intel_instructions": missing_intel
+        }
+        
+        # ============================================================
+        # RUN ALL 3 AGENTS IN PARALLEL
+        # ============================================================
+        logger.info(f"=== LAUNCHING 3 AGENTS IN PARALLEL ===")
+        logger.info(f"Missing fields: {missing_fields}")
+        
+        agent_results = await asyncio.gather(
+            run_single_agent(TACTICAL_PERSONAS[0], prompt_data, known_intel, missing_fields),
+            run_single_agent(TACTICAL_PERSONAS[1], prompt_data, known_intel, missing_fields),
+            run_single_agent(TACTICAL_PERSONAS[2], prompt_data, known_intel, missing_fields),
+            return_exceptions=True
+        )
+        
+        # Filter out failed agents
+        valid_results = []
+        for result in agent_results:
+            if isinstance(result, Exception):
+                logger.error(f"Agent returned exception: {result}")
+                continue
+            if isinstance(result, dict) and result.get('response') is not None:
+                valid_results.append(result)
+        
+        logger.info(f"=== {len(valid_results)}/{len(TACTICAL_PERSONAS)} AGENTS SUCCEEDED ===")
+        
+        if not valid_results:
+            raise Exception("All agents failed — using fallback")
+        
+        # ============================================================
+        # PICK THE BEST RESPONSE
+        # ============================================================
+        best_result = max(valid_results, key=lambda r: r['score'])
+        response_dict = best_result['response']
+        
+        # Log the competition results
+        for r in sorted(valid_results, key=lambda x: x['score'], reverse=True):
+            marker = "👑" if r['agent'] == best_result['agent'] else "  "
+            logger.info(f"{marker} Agent [{r['agent']}] Score: {r['score']:.1f}")
+        
+        logger.info(f"=== WINNER: [{best_result['agent']}] with score {best_result['score']:.1f} ===")
+        
+        # ============================================================
+        # MERGE INTELLIGENCE FROM ALL AGENTS (even non-winners)
+        # ============================================================
+        all_responses = [r['response'] for r in valid_results]
+        merged_intel = merge_intelligence(all_responses)
+        
+        # Use merged intel (best of all agents combined)
+        response_dict['extractedIntelligence'] = merged_intel
+        
+        # Add engagement metrics
+        engagement = calculate_engagement_metrics(request.get_history(), request.message)
+        response_dict['engagementMetrics'] = {
+            "engagementDurationSeconds": engagement.engagementDurationSeconds,
+            "totalMessagesExchanged": engagement.totalMessagesExchanged
+        }
+        
+        # Save the LLM's original agent notes before wrapping with competition info
+        original_agent_notes = response_dict.get('agentNotes', 'Scam detected and intelligence extracted')
+        
+        # Add multi-agent notes (for internal logging only)
+        agent_notes_combined = f"[WINNER: {best_result['agent']}] {response_dict.get('agentNotes', '')}"
+        if len(valid_results) > 1:
+            all_agents = ', '.join([f"{r['agent']}({r['score']:.0f})" for r in valid_results])
+            agent_notes_combined += f" | Agents competed: {all_agents}"
+        response_dict['agentNotes'] = agent_notes_combined
+        
+        logger.info(f"=== RETURNING BEST RESPONSE ===")
+        logger.info(f"Reply: {response_dict.get('reply', '')}")
+        
+        # Log conversation
+        log_conversation(request.get_session_id(), body, response_dict)
+        
+        # Accumulate session intelligence (merged from ALL agents)
+        session_id = request.get_session_id()
+        total_messages = len(request.get_history()) + 1
+        
+        if merged_intel:
+            accumulate_session_intelligence(session_id, merged_intel)
+        
+        session_timestamps[session_id] = datetime.now()
+        
+        # Send callback if conditions met
+        should_send_callback = (
+            total_messages >= MAX_MESSAGES_BEFORE_CALLBACK and 
+            response_dict.get('scamDetected', False) and
+            response_dict.get('confidenceScore', 0) >= 0.7
+        )
+        
+        if should_send_callback:
+            send_callback(session_id, total_messages, original_agent_notes)
+        
+        # Return simplified response
+        api_response = {
+            "status": "success",
+            "reply": response_dict.get('reply', '')
+        }
+        
+        from fastapi.responses import JSONResponse
+        return JSONResponse(content=api_response)
+        
+    except Exception as e:
+        import traceback
+        logger.error(f"Error processing request: {str(e)}")
+        print(f"DEBUG: Exception Type: {type(e)}")
+        print(f"DEBUG: Exception Args: {e.args}")
+        print(f"DEBUG: Full Traceback:")
+        traceback.print_exc()
+        
+        # Dynamic fallback — uses scammer's actual message for context-aware response
+        try:
+            scammer_msg = request.message.text if request else "unknown"
+            known = analyze_known_intelligence(request.get_history(), scammer_msg) if request else {}
+            import random as _rand
+            persona_pick = _rand.choice(["confused_uncle", "eager_victim", "worried_citizen"])
+            language = request.metadata.language if request and request.metadata else "English"
+            fallback_response = generate_smart_fallback(scammer_msg, "", persona_pick, known, language)
+            fallback_response["engagementMetrics"]["totalMessagesExchanged"] = len(request.get_history()) + 1
+            fallback_response["agentNotes"] = f"Endpoint-level fallback ({persona_pick}). Error: {str(e)[:200]}"
+        except:
+            # Absolute last resort
+            fallback_response = {
+                "status": "success",
+                "scamDetected": True,
+                "confidenceScore": 0.75,
+                "reply": "Sir ek minute, mera screen hang ho gaya. Aap apna naam aur employee ID bata do, main note kar leta hun. Phir aage badhte hain.",
+                "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 1},
+                "extractedIntelligence": {
+                    "bankAccounts": [], "upiIds": [], "phoneNumbers": [],
+                    "phishingLinks": [], "emailAddresses": [], "employeeIds": []
+                },
+                "agentNotes": f"Last resort fallback. Error: {str(e)}",
+                "scamType": "bank_fraud"
+            }
+        
+        logger.info(f"Returning fallback response: {fallback_response['reply'][:100]}")
+        from fastapi.responses import JSONResponse
+        return JSONResponse(content=fallback_response)
+>>>>>>> 131eeb48fd0500a3b0c4ee5a95cf75ba1af109e0
 
     if expected and received.strip() != expected:
         logger.error(f"AUTH: Key mismatch")
