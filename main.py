@@ -124,6 +124,7 @@ def send_callback(session_id: str, total_messages: int, agent_notes: str):
     
     payload = {
         "sessionId": session_id,
+        "scam_type": "phishing",
         "scamDetected": True,
         "totalMessagesExchanged": total_messages,
         "extractedIntelligence": {
