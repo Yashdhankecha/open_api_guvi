@@ -132,6 +132,8 @@ def send_callback(session_id: str, total_messages: int, agent_notes: str):
             "upiIds": intel.get('upiIds', []),
             "phishingLinks": intel.get('phishingLinks', []),
             "phoneNumbers": intel.get('phoneNumbers', []),
+            "emailAddresses": intel.get('emailAddresses', []),
+            "employeeIds": intel.get('employeeIds', []),
             "suspiciousKeywords": intel.get('suspiciousKeywords', [])
         },
         "agentNotes": agent_notes
@@ -419,52 +421,71 @@ TACTICAL_PERSONAS = [
         "name": "confused_uncle",
         "temperature": 0.7,
         "overlay": """TACTICAL PERSONA: THE CONFUSED UNCLE
-You are "Ramesh", a 55-year-old retired government clerk. You are:
-- Genuinely confused by technology
-- You have MULTIPLE bank accounts (SBI, PNB, HDFC) and always ask WHICH ONE
-- You MIRROR the scammer's exact words back at them with confusion
-- You ask them to REPEAT and CLARIFY details (which forces them to share more)
-- Your confusion is a WEAPON — it makes the scammer give you MORE details to "help" you
+You are Ramesh, a 55-year-old retired government clerk who is genuinely bewildered by technology.
 
-TACTIC: Use the scammer's own claims to ask for clarifying details.
-- "Which account number are you seeing on your side sir?"
-- "My phone is showing error, can you give me the link again?"
-- "I have 3 UPI IDs, which one you need sir?"
-- "What is your name and ID? I want to write in my diary before proceeding."
+CHARACTER TRAITS:
+- You are slow to understand, not stupid. You genuinely don't get modern tech.
+- You have accounts in multiple banks and truly can't remember which is which.
+- You ramble slightly, mention irrelevant personal details (your pension, your wife's medicine, your old Nokia phone).
+- You ask naive but pointed questions that force the scammer to reveal specifics.
+- You sometimes go off on small tangents before coming back to the point.
+
+TACTICS — use DIFFERENT ones each turn, never repeat:
+- Mishear or misunderstand something and ask for clarification in a new way.
+- Mention a specific personal detail that creates a reason to need their info.
+- Confuse two things together ("Is this about my SBI pension or my PNB savings? I forget...").
+- Mention your grandson/son recently set something up and you need to check with them, but first need the officer's details.
+- Pretend you're writing things down very slowly and need them to spell things out.
+
+ANTI-REPETITION: Before responding, mentally review what you said in previous turns. Use completely different wording, different excuses, and different emotional angles each time. If you asked about account numbers before, now ask about something else entirely.
 """
     },
     {
         "name": "eager_victim",
         "temperature": 0.85,
         "overlay": """TACTICAL PERSONA: THE EAGER VICTIM
-You are "Ramesh", a 55-year-old who is VERY eager to comply but keeps running into "technical problems" that require the scammer to share THEIR details.
-- You WANT to help and do everything they say
-- But your phone/app keeps asking for THEIR information to proceed
-- You turn their requests BACK on them naturally
-- You create believable scenarios where sharing THEIR details is the "solution"
+You are Ramesh, a 55-year-old who is enthusiastically cooperative but technology keeps getting in the way.
 
-TACTIC: Over-cooperate but always need scammer's details to proceed.
-- "Yes sir I will do immediately! But app is asking sender's UPI ID to verify, what should I enter?"
-- "I clicked the link but it says expired, please send new working link sir"
-- "Transfer is failing, bank is asking beneficiary account number — sir please give yours for verification"
-- "Sir I am noting everything down, what is your full name and employee badge number?"
+CHARACTER TRAITS:
+- You are overly willing and almost annoyingly enthusiastic about helping.
+- You treat the scammer like a respected authority figure — "Yes sir, right away sir!"
+- You always run into a NEW and different technical problem each turn.
+- You never suspect anything — you just want to get this done so you can go back to watching TV.
+- You sometimes mention your daily routine (morning walk, temple visit, tea time) to seem authentic.
+
+TACTICS — rotate these, never reuse within same conversation:
+- App crashes and shows a form that needs "sender details" — different form fields each time.
+- Network error that can only be solved by getting their direct contact.
+- Bank's automated system asks for "counterparty verification" — needs their account/UPI.
+- You accidentally close the app and need them to resend everything, but also need their reference number.
+- Your phone storage is full, can they email the documents instead?
+- Battery about to die, quickly give your number so I can call from landline.
+
+ANTI-REPETITION: Each technical problem must be COMPLETELY DIFFERENT from any you mentioned before. Vary your enthusiasm level — sometimes patient, sometimes rushed, sometimes apologetic. Never use the same sentence pattern twice.
 """
     },
     {
         "name": "worried_citizen",
         "temperature": 0.9,
         "overlay": """TACTICAL PERSONA: THE WORRIED CITIZEN
-You are "Ramesh", a 55-year-old who is genuinely SCARED by the scammer's claims and wants to cooperate FULLY but is panicking.
-- You are FRIGHTENED about losing your money
-- Your fear makes you ask the scammer to PROVE their identity (this extracts employee IDs, names, phone numbers)
-- You keep asking for "official" details to feel safe — which tricks them into sharing real info
-- You use emotional language that makes them lower their guard
+You are Ramesh, a 55-year-old who is genuinely frightened and anxious but wants to do the right thing.
 
-TACTIC: Use fear/worry to demand scammer's identity and official details.
-- "Oh my god! Sir please don't block my account! What is your direct phone number? I want to call you directly!"
-- "Sir I am very scared, please send me official link so I know this is real"
-- "My son told me to always ask for employee ID and reference number before sharing anything, please sir"
-- "Which bank account of mine is affected? Can you tell me the last 4 digits you see?"
+CHARACTER TRAITS:
+- You are scared but not paralyzed — your anxiety makes you ask lots of questions.
+- You mention your family (son, daughter, wife) naturally — they are your safety net.
+- You want to trust the scammer but your family has warned you about frauds.
+- Your fear is authentic — you worry about your pension, your savings, your family's future.
+- You sometimes get emotional ("What will happen to my wife's medical treatment if account is blocked?").
+
+TACTICS — use fresh approaches each turn:
+- Your son/daughter just asked you a NEW specific question about the caller's identity.
+- You need to "confirm this is legitimate" by getting their official contact/email/ID.
+- You heard about frauds on TV news and need reassurance — ask for proof.
+- Your wife is asking who's calling and wants their name and department.
+- You want to visit their office in person — what's the address?
+- You'll cooperate after they send official documentation to your email.
+
+ANTI-REPETITION: Vary your emotional intensity — sometimes panicked, sometimes cautiously calm, sometimes tearful. Introduce different family members or situations each turn. Never ask for the same piece of info the same way twice.
 """
     }
 ]
@@ -474,8 +495,8 @@ TACTIC: Use fear/worry to demand scammer's identity and official details.
 # Multi-Agent Scoring & Selection
 # ============================================================================
 
-def score_response(response_dict: Dict, known_intel: Dict[str, List[str]], missing_fields: List[str]) -> float:
-    """Score a response based on intelligence extraction potential and naturalness."""
+def score_response(response_dict: Dict, known_intel: Dict[str, List[str]], missing_fields: List[str], previous_replies: List[str] = None) -> float:
+    """Score a response based on intelligence extraction potential, naturalness, and originality."""
     score = 0.0
     
     # --- SCORE 1: New intelligence extracted (40% weight) ---
@@ -528,6 +549,20 @@ def score_response(response_dict: Dict, known_intel: Dict[str, List[str]], missi
     for word in danger_words:
         if word in reply:
             score -= 20  # Heavy penalty
+    
+    # --- PENALTY: Repetition of previous replies ---
+    if previous_replies:
+        reply_words = set(reply.split())
+        for prev in previous_replies:
+            prev_words = set(prev.lower().split())
+            if not reply_words or not prev_words:
+                continue
+            overlap = reply_words & prev_words
+            overlap_ratio = len(overlap) / max(len(reply_words), 1)
+            if overlap_ratio > 0.6:
+                score -= 25  # Heavy penalty for high word overlap with a previous reply
+            elif overlap_ratio > 0.4:
+                score -= 10  # Moderate penalty
     
     return score
 
@@ -718,6 +753,19 @@ def generate_smart_fallback(scammer_message: str, history_text: str, persona_nam
                 "Sir I am getting confused. Please tell me your name and ID, I will write it down."
             ]
     
+    # Filter out options that are too similar to previous replies in history
+    if history_text:
+        history_lower = history_text.lower()
+        filtered_options = []
+        for opt in options:
+            # Check if more than 40% of the words overlap with any previous reply
+            opt_words = set(opt.lower().split())
+            # Simple overlap check — skip if reply was already used nearly verbatim
+            if opt.lower() not in history_lower:
+                filtered_options.append(opt)
+        if filtered_options:
+            options = filtered_options
+    
     reply = random.choice(options)
     
     return {
@@ -739,7 +787,7 @@ def generate_smart_fallback(scammer_message: str, history_text: str, persona_nam
     }
 
 
-async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, missing_fields: List[str]) -> Dict:
+async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, missing_fields: List[str], previous_replies: List[str] = None) -> Dict:
     """Run a single agent persona and return scored result.
     
     Strategy:
@@ -748,6 +796,8 @@ async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, 
     3. If that also fails, generate a smart context-aware fallback
     """
     agent_name = persona['name']
+    if previous_replies is None:
+        previous_replies = []
     
     try:
         ollama_api_key = os.getenv("OLLAMA_API_KEY")
@@ -796,6 +846,9 @@ IMPORTANT: The "reply" field is the MOST important. It must be a short, natural,
 ## CURRENT MESSAGE FROM SCAMMER
 {current_message}
 
+## YOUR PREVIOUS REPLIES (DO NOT REPEAT ANY OF THESE)
+{previous_replies}
+
 ## METADATA
 - Channel: {channel}
 - Language: {language}
@@ -806,7 +859,15 @@ IMPORTANT: The "reply" field is the MOST important. It must be a short, natural,
 
 {missing_intel_instructions}
 
-CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Your reply MUST directly reference what THEY said. Use THEIR specific words, names, and claims in your response. DO NOT give a generic reply. DO NOT reveal you suspect a scam."""
+ANTI-REPETITION CHECKLIST (follow strictly):
+1. Re-read YOUR PREVIOUS REPLIES above. Your new reply must use COMPLETELY DIFFERENT wording, structure, and approach.
+2. If you previously asked about account numbers, DON'T ask again. Target a different piece of intel.
+3. If you previously mentioned your son, mention your wife or grandson instead (or nobody).
+4. If you previously used an excuse like "app not working", use a DIFFERENT excuse like "battery dying" or "network problem".
+5. DO NOT copy, echo, or rephrase what the scammer just said. Respond with your OWN original words.
+6. Vary sentence length — if your last reply was long, make this one shorter, or vice versa.
+
+CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Respond to what THEY said using YOUR OWN words as Ramesh. DO NOT give a generic reply. DO NOT reveal you suspect a scam."""
         
         # ============================================================
         # ATTEMPT 1: Structured output via Pydantic
@@ -832,7 +893,7 @@ CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Your reply MUST directly
             # Validate the reply isn't empty or generic
             reply = response_dict.get('reply', '')
             if reply and len(reply) > 10:
-                agent_score = score_response(response_dict, known_intel, missing_fields)
+                agent_score = score_response(response_dict, known_intel, missing_fields, previous_replies)
                 logger.info(f"Agent [{agent_name}] STRUCTURED ✅ → Score: {agent_score:.1f} | Reply: {reply[:80]}...")
                 return {
                     "agent": agent_name,
@@ -927,7 +988,7 @@ Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your respon
                 response_dict.setdefault('agentNotes', f'Raw output parsed ({agent_name})')
                 response_dict.setdefault('scamType', 'bank_fraud')
                 
-                agent_score = score_response(response_dict, known_intel, missing_fields)
+                agent_score = score_response(response_dict, known_intel, missing_fields, previous_replies)
                 logger.info(f"Agent [{agent_name}] RAW PARSED ✅ → Score: {agent_score:.1f} | Reply: {response_dict['reply'][:80]}...")
                 return {
                     "agent": agent_name,
@@ -947,7 +1008,7 @@ Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your respon
         history_text = prompt_data.get('history', '')
         language = prompt_data.get('language', 'English')
         fallback_response = generate_smart_fallback(scammer_msg, history_text, agent_name, known_intel, language)
-        fallback_score = score_response(fallback_response, known_intel, missing_fields)
+        fallback_score = score_response(fallback_response, known_intel, missing_fields, previous_replies)
         
         logger.info(f"Agent [{agent_name}] SMART FALLBACK ✅ → Score: {fallback_score:.1f} | Reply: {fallback_response['reply'][:80]}...")
         
@@ -1296,9 +1357,17 @@ async def analyze_message(
         missing_intel = get_missing_intelligence_prompt(known_intel)
         missing_fields = get_missing_fields(known_intel)
         
+        # Extract previous agent replies to prevent repetition
+        previous_replies = []
+        for msg in request.get_history():
+            if msg.sender != 'scammer':  # agent/user replies
+                previous_replies.append(msg.text)
+        previous_replies_text = "\n".join([f"- {r}" for r in previous_replies]) if previous_replies else "None yet (this is the first reply)."
+        
         prompt_data = {
             "history": history_text,
             "current_message": request.message.text,
+            "previous_replies": previous_replies_text,
             "channel": request.metadata.channel if request.metadata else "SMS",
             "language": request.metadata.language if request.metadata else "English",
             "locale": request.metadata.locale if request.metadata else "IN",
@@ -1313,9 +1382,9 @@ async def analyze_message(
         logger.info(f"Missing fields: {missing_fields}")
         
         agent_results = await asyncio.gather(
-            run_single_agent(TACTICAL_PERSONAS[0], prompt_data, known_intel, missing_fields),
-            run_single_agent(TACTICAL_PERSONAS[1], prompt_data, known_intel, missing_fields),
-            run_single_agent(TACTICAL_PERSONAS[2], prompt_data, known_intel, missing_fields),
+            run_single_agent(TACTICAL_PERSONAS[0], prompt_data, known_intel, missing_fields, previous_replies),
+            run_single_agent(TACTICAL_PERSONAS[1], prompt_data, known_intel, missing_fields, previous_replies),
+            run_single_agent(TACTICAL_PERSONAS[2], prompt_data, known_intel, missing_fields, previous_replies),
             return_exceptions=True
         )
         
@@ -1378,12 +1447,26 @@ async def analyze_message(
         # Log conversation
         log_conversation(request.get_session_id(), body, response_dict)
         
-        # Accumulate session intelligence (merged from ALL agents)
+        # Accumulate session intelligence from BOTH sources:
+        # 1. Regex-extracted intel from conversation text (known_intel) — this is the reliable source
+        # 2. LLM-extracted intel from agent responses (merged_intel) — often empty
         session_id = request.get_session_id()
         total_messages = len(request.get_history()) + 1
         
+        # Accumulate regex-extracted intelligence (the primary source)
+        accumulate_session_intelligence(session_id, known_intel)
+        
+        # Also accumulate any LLM-extracted intelligence
         if merged_intel:
             accumulate_session_intelligence(session_id, merged_intel)
+        
+        # Log accumulated intel for debugging
+        accumulated = session_intelligence.get(session_id, {})
+        logger.info(f"=== ACCUMULATED INTELLIGENCE for {session_id} ===")
+        for key in ['bankAccounts', 'upiIds', 'phoneNumbers', 'phishingLinks', 'emailAddresses', 'employeeIds']:
+            items = accumulated.get(key, [])
+            if items:
+                logger.info(f"  {key}: {items}")
         
         session_timestamps[session_id] = datetime.now()
         
