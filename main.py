@@ -88,6 +88,24 @@ def deduplicate_intelligence(intel: Dict[str, List[str]]) -> Dict[str, List[str]
     return result
 
 
+def deduplicate_payload_arrays(payload: Dict) -> Dict:
+    """Deduplicate all list values in a payload dict (and nested dicts) to avoid repeated entries."""
+    for key, value in payload.items():
+        if isinstance(value, list):
+            # Preserve order while deduplicating
+            seen = set()
+            deduped = []
+            for item in value:
+                item_key = item.lower().strip() if isinstance(item, str) else item
+                if item_key not in seen:
+                    seen.add(item_key)
+                    deduped.append(item)
+            payload[key] = deduped
+        elif isinstance(value, dict):
+            payload[key] = deduplicate_payload_arrays(value)
+    return payload
+
+
 def accumulate_session_intelligence(session_id: str, new_intel: Dict[str, List[str]]):
     """Accumulate intelligence for a session across all messages."""
     if session_id not in session_intelligence:
@@ -140,6 +158,9 @@ def send_callback(session_id: str, total_messages: int, agent_notes: str):
         },
         "agentNotes": agent_notes
     }
+    
+    # Deduplicate all arrays in the payload before sending
+    payload = deduplicate_payload_arrays(payload)
     
     try:
         logger.info(f"=== SENDING CALLBACK ===")
@@ -635,9 +656,8 @@ def merge_intelligence(responses: List[Dict]) -> Dict[str, List[str]]:
         for key in merged:
             merged[key].extend(intel.get(key, []))
     
-    # Deduplicate
-    for key in merged:
-        merged[key] = list(set(merged[key]))
+    # Deduplicate using the centralized function
+    merged = deduplicate_payload_arrays(merged)
     
     return merged
 
@@ -1464,31 +1484,78 @@ async def analyze_message(
         }
         
         # ============================================================
-        # RUN ALL 3 AGENTS IN PARALLEL
+        # RUN ALL 3 AGENTS IN PARALLEL (with 25s timeout)
         # ============================================================
-        logger.info(f"=== LAUNCHING 3 AGENTS IN PARALLEL ===")
+        AGENT_TIMEOUT_SECONDS = 25
+        logger.info(f"=== LAUNCHING 3 AGENTS IN PARALLEL (timeout: {AGENT_TIMEOUT_SECONDS}s) ===")
         logger.info(f"Missing fields: {missing_fields}")
         
-        agent_results = await asyncio.gather(
-            run_single_agent(TACTICAL_PERSONAS[0], prompt_data, known_intel, missing_fields, previous_replies),
-            run_single_agent(TACTICAL_PERSONAS[1], prompt_data, known_intel, missing_fields, previous_replies),
-            run_single_agent(TACTICAL_PERSONAS[2], prompt_data, known_intel, missing_fields, previous_replies),
-            return_exceptions=True
-        )
+        # Create individual tasks so we can collect partial results on timeout
+        agent_tasks = [
+            asyncio.create_task(run_single_agent(TACTICAL_PERSONAS[0], prompt_data, known_intel, missing_fields, previous_replies)),
+            asyncio.create_task(run_single_agent(TACTICAL_PERSONAS[1], prompt_data, known_intel, missing_fields, previous_replies)),
+            asyncio.create_task(run_single_agent(TACTICAL_PERSONAS[2], prompt_data, known_intel, missing_fields, previous_replies)),
+        ]
         
-        # Filter out failed agents
+        done, pending = await asyncio.wait(agent_tasks, timeout=AGENT_TIMEOUT_SECONDS)
+        
+        # Cancel any agents still running
+        for task in pending:
+            task.cancel()
+        
+        # Collect results from completed agents
+        agent_results = []
+        for task in done:
+            try:
+                result = task.result()
+                agent_results.append(result)
+            except Exception as exc:
+                logger.error(f"Agent task raised exception: {exc}")
+        
+        timed_out = len(pending) > 0
+        if timed_out:
+            logger.warning(f"=== {len(pending)} AGENT(S) TIMED OUT after {AGENT_TIMEOUT_SECONDS}s, {len(done)} completed ===")
+        
+        # Filter valid results (whether timed out or not)
         valid_results = []
         for result in agent_results:
-            if isinstance(result, Exception):
-                logger.error(f"Agent returned exception: {result}")
-                continue
             if isinstance(result, dict) and result.get('response') is not None:
                 valid_results.append(result)
         
         logger.info(f"=== {len(valid_results)}/{len(TACTICAL_PERSONAS)} AGENTS SUCCEEDED ===")
         
+        # If NO agents succeeded, use smart fallback
         if not valid_results:
-            raise Exception("All agents failed — using fallback")
+            logger.warning("=== ALL AGENTS FAILED/TIMED OUT — using fallback ===")
+            import random as _rand
+            persona_pick = _rand.choice(["confused_uncle", "eager_victim", "worried_citizen"])
+            language = request.metadata.language if request.metadata else "English"
+            fallback_response = generate_smart_fallback(
+                request.message.text, history_text, persona_pick, known_intel, language
+            )
+            engagement = calculate_engagement_metrics(request.get_history(), request.message)
+            fallback_response["engagementMetrics"] = {
+                "engagementDurationSeconds": engagement.engagementDurationSeconds,
+                "totalMessagesExchanged": engagement.totalMessagesExchanged
+            }
+            fallback_response["agentNotes"] = f"Timeout/failure fallback ({persona_pick})"
+            
+            # Track session intelligence and scam type even on fallback
+            session_id = request.get_session_id()
+            total_messages = len(request.get_history()) + 1
+            accumulate_session_intelligence(session_id, known_intel)
+            if session_id not in session_scam_types:
+                session_scam_types[session_id] = fallback_response.get('scamType', 'unknown')
+            session_timestamps[session_id] = datetime.now()
+            
+            # Send callback even on fallback if conditions met
+            if total_messages >= MAX_MESSAGES_BEFORE_CALLBACK:
+                send_callback(session_id, total_messages, fallback_response.get("agentNotes", "Fallback response"))
+            
+            log_conversation(request.get_session_id(), body, fallback_response)
+            logger.info(f"Returning fallback: {fallback_response['reply'][:100]}")
+            from fastapi.responses import JSONResponse
+            return JSONResponse(content={"status": "success", "reply": fallback_response.get('reply', '')})
         
         # ============================================================
         # PICK THE BEST RESPONSE
@@ -1509,8 +1576,8 @@ async def analyze_message(
         all_responses = [r['response'] for r in valid_results]
         merged_intel = merge_intelligence(all_responses)
         
-        # Use merged intel (best of all agents combined)
-        response_dict['extractedIntelligence'] = merged_intel
+        # Use merged intel (best of all agents combined) — deduplicate all arrays
+        response_dict['extractedIntelligence'] = deduplicate_payload_arrays(merged_intel)
         
         # Add engagement metrics
         engagement = calculate_engagement_metrics(request.get_history(), request.message)
@@ -1602,25 +1669,41 @@ async def analyze_message(
             fallback_response = generate_smart_fallback(scammer_msg, "", persona_pick, known, language)
             fallback_response["engagementMetrics"]["totalMessagesExchanged"] = len(request.get_history()) + 1
             fallback_response["agentNotes"] = f"Endpoint-level fallback ({persona_pick}). Error: {str(e)[:200]}"
+            # Deduplicate all arrays
+            fallback_response = deduplicate_payload_arrays(fallback_response)
         except:
-            # Absolute last resort
+            # Absolute last resort — pick a random varied response
+            import random as _rand_last
+            last_resort_replies = [
+                "Sir ek minute, mera screen hang ho gaya. Aap apna naam aur employee ID bata do, main note kar leta hun.",
+                "Hello? Haan haan sun raha hun... thoda aur detail me batao na, mujhe samajh nahi aaya. Aapka contact number kya hai?",
+                "Arre sir sorry, mera phone slow chal raha hai. Aap please apna official email bhejo, main wahan se reply karta hun.",
+                "Oh accha accha... wait, mera bete ka phone use karta hun. Tab tak aap apna reference number ya ID bata do please?",
+                "Haan ji... mujhe thoda confuse ho raha hai. Aap konsi company se bol rahe ho? Apna direct number do na sir.",
+                "Sir meri wife pooch rahi hai kaun hai phone pe. Aap apna full name aur department bata do, main unhe bata deta hun."
+            ]
+            scam_type_inferred = "unknown"
+            try:
+                scam_type_inferred = infer_scam_type_from_message(request.message.text) if request else "unknown"
+            except:
+                pass
             fallback_response = {
                 "status": "success",
                 "scamDetected": True,
                 "confidenceScore": 0.75,
-                "reply": "Sir ek minute, mera screen hang ho gaya. Aap apna naam aur employee ID bata do, main note kar leta hun. Phir aage badhte hain.",
+                "reply": _rand_last.choice(last_resort_replies),
                 "engagementMetrics": {"engagementDurationSeconds": 0, "totalMessagesExchanged": 1},
                 "extractedIntelligence": {
                     "bankAccounts": [], "upiIds": [], "phoneNumbers": [],
                     "phishingLinks": [], "emailAddresses": [], "employeeIds": []
                 },
                 "agentNotes": f"Last resort fallback. Error: {str(e)}",
-                "scamType": "unknown"
+                "scamType": scam_type_inferred
             }
         
         logger.info(f"Returning fallback response: {fallback_response['reply'][:100]}")
         from fastapi.responses import JSONResponse
-        return JSONResponse(content=fallback_response)
+        return JSONResponse(content={"status": "success", "reply": fallback_response.get('reply', '')})
 
 
 @app.api_route("/ping", methods=["GET", "HEAD", "POST"], response_class=PlainTextResponse)
