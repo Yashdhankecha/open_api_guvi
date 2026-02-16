@@ -41,10 +41,13 @@ An **AI-powered cybersecurity honeypot** that doesn't just detect scams — it *
 | 🏆 **AI Response Scoring** | Weighted scoring system picks the **optimal reply** automatically |
 | 🔀 **Intelligence Merging** | Combines intel from **ALL 3 agents**, not just the winner |
 | 🔍 **Dual Extraction Pipeline** | Regex + 3× LLM extraction — nothing slips through |
-| ⚡ **Zero Extra Latency** | Parallel execution — 3 agents take the **same time as 1** |
+| ⚡ **25s Timeout with Partial Results** | `asyncio.wait()` with timeout — agents that finish in time are used, laggards are cancelled |
 | 🛡️ **Graceful Fallback** | 3-tier execution: Structured → Raw Parse → Smart Context-Aware fallback |
-| 📡 **Auto Callback** | Sends a full intelligence report to the GUVI endpoint when threshold is met |
-| 🌐 **Multi-Language** | Responds in the scammer's language (Hindi ↔ English ↔ Hinglish) |
+| 📡 **Auto Callback** | Sends a full intelligence report to the GUVI endpoint after ≥18 messages |
+| 🌐 **Auto Language Detection** | Detects Hindi / Hinglish / English from the scammer's actual message — responds in the same language |
+| 🧹 **Smart Deduplication** | Phone numbers normalized (+91 / 10-digit), UPI & email case-insensitive dedup, all payload arrays deduplicated |
+| 🗂️ **Session Intelligence Accumulation** | Intel accumulates across conversation turns per session, ensuring nothing is lost |
+| 📋 **Rich Conversation Logging** | Every turn is logged to `conversation_log.txt` with timestamps, intel, and agent competition results |
 
 ---
 
@@ -55,10 +58,11 @@ An **AI-powered cybersecurity honeypot** that doesn't just detect scams — it *
  ┌──────────────┐             │     POST /analyze            │
  │   Scammer    │────────────▶│                              │
  │  (Message)   │             │  1. Parse & Validate         │
- └──────────────┘             │  2. Regex Intel Scan         │
-                              │  3. Determine Missing Fields │
+ └──────────────┘             │  2. Language Detection       │
+                              │  3. Regex Intel Scan         │
+                              │  4. Determine Missing Fields │
                               │                              │
-                              │  ┌── asyncio.gather ──────┐  │
+                              │  ┌── asyncio.wait(25s) ───┐  │
                               │  │                        │  │
                               │  │ 🧓 Confused Uncle      │──│──▶ LLM (temp=0.7)
                               │  │ 🙋 Eager Victim        │──│──▶ LLM (temp=0.85)
@@ -66,11 +70,12 @@ An **AI-powered cybersecurity honeypot** that doesn't just detect scams — it *
                               │  │                        │  │
                               │  └────────────────────────┘  │
                               │                              │
-                              │  4. Score All 3 Responses    │
-                              │  5. Pick 👑 Best Reply       │
-                              │  6. Merge Intel from ALL 3   │
-                              │  7. Log & Accumulate         │
-                              │  8. Callback (if ready)      │
+                              │  5. Score All Responses      │
+                              │  6. Pick 👑 Best Reply       │
+                              │  7. Merge Intel from ALL     │
+                              │  8. Deduplicate Everything   │
+                              │  9. Accumulate Session Intel │
+                              │ 10. Log & Callback (if ready)│
                               └──────────────┬───────────────┘
                                              │
                               ┌──────────────▼───────────────┐
@@ -83,7 +88,7 @@ An **AI-powered cybersecurity honeypot** that doesn't just detect scams — it *
 
 ## 🎭 The Three Agents
 
-Each agent shares the same base persona ("Ramesh", 55-year-old) but uses a **completely different strategy**:
+Each agent shares the same base persona ("Ramesh", 55-year-old retired government clerk) but uses a **completely different strategy**:
 
 ### 🧓 Agent 1: The Confused Uncle
 | | |
@@ -113,17 +118,18 @@ Each agent shares the same base persona ("Ramesh", 55-year-old) but uses a **com
 
 ## 🏆 Scoring System
 
-After all 3 agents respond, each is scored and the **highest-scoring reply** is sent:
+After all agents respond, each is scored and the **highest-scoring reply** is sent:
 
 | Component | Weight | What It Measures |
 |---|---|---|
-| **New Intel Extracted** | 40% | Genuinely new items found (phishing links = 15pts, bank = 12pts, UPI = 10pts) |
-| **Targets Missing Fields** | 30% | Bonus if the reply asks about fields we haven't captured yet |
+| **New Intel Extracted** | 40% | Genuinely new items found (phishing links = 15pts, bank = 12pts, UPI = 10pts, phone = 8pts, employee IDs = 6pts, email = 5pts) |
+| **Targets Missing Fields** | 30% | +15 bonus if the reply asks about fields we haven't captured yet |
 | **Scam Confidence** | 15% | Higher confidence → higher score |
 | **Reply Naturalness** | 15% | Sweet spot: 20-200 characters |
 | **Safety Penalty** | -20 each | Heavy penalty for danger words (*scam, fraud, police, etc.*) |
+| **Repetition Penalty** | -10 to -25 | Penalizes high word overlap with previous replies |
 
-> **Important:** The winning agent's reply goes to the scammer, but intelligence is **merged from ALL 3 agents**.
+> **Important:** The winning agent's reply goes to the scammer, but intelligence is **merged from ALL agents**.
 
 ---
 
@@ -133,22 +139,73 @@ Each agent has **3 fallback layers** to guarantee a unique, contextual response:
 
 | Tier | Strategy | LLM Required? |
 |:---:|---|:---:|
-| **Tier 1** | Structured Pydantic output | ✅ Yes |
-| **Tier 2** | Raw text + manual JSON extraction (3 parse methods) | ✅ Yes |
-| **Tier 3** | Smart context-aware fallback (20+ replies per persona) | ❌ No LLM |
+| **Tier 1** | Structured Pydantic output via `with_structured_output()` | ✅ Yes |
+| **Tier 2** | Raw text + manual JSON extraction (3 parse methods: direct, regex, text cleanup) | ✅ Yes |
+| **Tier 3** | Smart context-aware fallback — analyzes scammer's message keywords | ❌ No LLM |
 
 ```
 Tier 3 analyzes the scammer's actual message:
 ├── Detects: bank names (SBI, PNB, HDFC...)
-├── Detects: OTP/PIN keywords
+├── Detects: OTP/PIN/CVV keywords
 ├── Detects: links, URLs
+├── Detects: UPI keywords (paytm, phonepe, gpay)
 ├── Detects: names ("Mr. Sharma")
 ├── Detects: urgency (block, suspend)
+├── Detects: employee/officer references
+├── Detects: language (Hindi/Hinglish/English)
 └── Picks persona-specific reply → random selection
 
-Result: 20+ replies × 3 personas = 60+ unique responses
+Result: 20+ replies × 3 personas × 2 languages = 120+ unique responses
          → SAME reply NEVER repeats
 ```
+
+---
+
+## 🔄 Timeout & Partial Results
+
+The system uses `asyncio.wait()` instead of `asyncio.gather()` for **graceful timeout handling**:
+
+| Scenario | Behavior |
+|---|---|
+| All 3 agents finish in ≤25s | All results scored, best one picked |
+| 2 agents finish, 1 times out | Timed-out agent cancelled, remaining 2 compete normally |
+| 1 agent finishes | That agent's response (from any tier) is used |
+| **No agents finish** | `generate_smart_fallback()` creates a context-aware response |
+
+> The system **never hangs** — there is always a response within the timeout window.
+
+---
+
+## 🧹 Deduplication Pipeline
+
+Intelligence is deduplicated at multiple levels:
+
+| Stage | What It Does |
+|---|---|
+| **Phone Numbers** | Normalizes `+91XXXXXXXXXX` and `XXXXXXXXXX` to the same canonical form |
+| **UPI IDs** | Case-insensitive dedup, strips domain suffixes |
+| **Email Addresses** | Case-insensitive dedup, strips domain suffixes |
+| **All Arrays** | `deduplicate_payload_arrays()` runs on every exit path (callback, response, fallback) |
+| **Session Accumulation** | `accumulate_session_intelligence()` deduplicates after every turn |
+
+---
+
+## 🔍 Scam Type Detection
+
+The system classifies scams into **named types** using both LLM analysis and keyword-based inference:
+
+| Scam Type | Triggers |
+|---|---|
+| `phishing` | Links, URLs, "click", "verify credentials", "download" |
+| `bank_fraud` | Bank names, "account blocked", OTP/CVV/PIN requests, RBI impersonation |
+| `upi_fraud` | UPI keywords, QR codes, collect requests, "scan", "send money" |
+| `lottery_scam` | "congratulations", "winner", "prize" |
+| `tech_support` | "Microsoft", "virus", "antivirus" |
+| `job_scam` | "hiring", "work from home", "salary" |
+| `customs_scam` | "parcel", "courier", "shipment" |
+| `legal_threat` | "arrest", "warrant", "court", "case filed" |
+| `investment_scam` | "crypto", "bitcoin", "trading", "mutual fund" |
+| `insurance_scam` | "policy", "claim", "LIC", "premium" |
 
 ---
 
@@ -164,8 +221,8 @@ Result: 20+ replies × 3 personas = 60+ unique responses
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/open_api_guvi.git
-cd open_api_guvi
+git clone https://github.com/your-username/honeypot.git
+cd honeypot
 
 # Create virtual environment
 python -m venv venv
@@ -249,7 +306,7 @@ Content-Type: application/json
 }
 ```
 
-**Behind the scenes:** 3 agents competed, intel merged, conversation logged, session updated.
+**Behind the scenes:** 3 agents competed, intel merged & deduplicated, conversation logged, session intelligence accumulated, callback sent if threshold met.
 
 ### Other Endpoints
 
@@ -287,7 +344,8 @@ Layer 3: MERGE & DEDUP
 ├── Combine intel from ALL 3 agents
 ├── Normalize phone numbers (+91... = 10-digit)
 ├── Case-insensitive UPI dedup
-└── set() deduplication on all fields
+├── Case-insensitive email dedup
+└── Deduplicate all arrays (order-preserving)
 ```
 
 ### Intelligence Priority
@@ -303,38 +361,67 @@ Layer 3: MERGE & DEDUP
 
 ---
 
+## 📡 Auto Callback
+
+When the following conditions are met, the system automatically sends a full intelligence report to the GUVI callback endpoint:
+
+| Condition | Threshold |
+|---|---|
+| Total messages exchanged | ≥ 18 |
+| Scam detected | `true` |
+| Confidence score | ≥ 0.7 |
+
+**Callback payload includes:**
+- `sessionId` — the conversation session identifier
+- `scam_type` — detected scam type (tracked per session)
+- `scamDetected` — always `true`
+- `totalMessagesExchanged` — running count
+- `extractedIntelligence` — accumulated & deduplicated intel across all turns
+- `agentNotes` — the winning agent's observations
+
+> The callback is sent **at most once** per session (tracked via `session_callback_sent`).
+
+---
+
 ## ❓ Troubleshooting
 
 ### ❌ API returns 401 Unauthorized
 - Ensure `.env` file exists and has `HONEYPOT_API_KEY`.
 - Check if your request header key is exactly `x-api-key`.
-- Verify no extra spaces in `.env` value (though code now trims them).
-- Restart server after `.env` changes (`uvicorn` reload should handle it, but restart to be safe).
+- Verify no extra spaces in `.env` value (the code trims whitespace).
+- Restart server after `.env` changes.
+
+### ❌ All agents timing out
+- The 25-second timeout may not be enough if the LLM endpoint is slow.
+- Check `OLLAMA_API_KEY` is valid and the Ollama endpoint is reachable.
+- The system will still return a smart fallback response — it never errors out.
 
 ---
 
 ## 📦 Project Structure
 
 ```
-open_api_guvi/
-├── main.py                  # 🧠 Complete application (~1083 lines)
-│   ├── Pydantic Models      #    Request/Response schemas
-│   ├── BASE_SYSTEM_PROMPT   #    Shared agent instructions
-│   ├── TACTICAL_PERSONAS    #    3 agent definitions
-│   ├── score_response()     #    Scoring algorithm
-│   ├── merge_intelligence() #    Multi-agent intel merge
-│   ├── run_single_agent()   #    Individual agent runner
+honeypot/
+├── main.py                  # 🧠 Complete application (~1810 lines)
+│   ├── Pydantic Models      #    Request/Response schemas (Message, Metadata, HoneypotRequest, HoneypotResponse, etc.)
+│   ├── BASE_SYSTEM_PROMPT   #    Shared agent instructions (~120 lines of detailed persona & rules)
+│   ├── TACTICAL_PERSONAS    #    3 agent definitions (confused_uncle, eager_victim, worried_citizen)
+│   ├── score_response()     #    Multi-factor scoring algorithm with repetition penalty
+│   ├── merge_intelligence() #    Multi-agent intel merge & dedup
+│   ├── deduplicate_*()      #    Phone normalization, UPI/email dedup, array dedup
+│   ├── generate_smart_fallback()  # 120+ context-aware fallback replies
+│   ├── detect_language_from_message()  # Hindi/Hinglish/English auto-detection
+│   ├── infer_scam_type_from_message()  # Keyword-based scam classification
+│   ├── run_single_agent()   #    Individual agent runner (3-tier: structured → raw → fallback)
+│   ├── send_callback()      #    GUVI callback with deduplication
 │   ├── POST /analyze        #    Core multi-agent endpoint
-│   └── Utilities            #    Logging, regex, formatting
+│   └── Utilities            #    Logging, regex extraction, formatting, session tracking
 │
-├── requirements.txt         # 📦 Dependencies (8 packages)
-├── render.yaml              # 🚀 Render deployment config
+├── llm_config.py            # ⚙️ LLM configuration helper
+├── requirements.txt         # 📦 Dependencies (7 packages)
 ├── .env                     # 🔑 API keys (gitignored)
-├── .gitignore               # 🚫 Ignore rules
-├── PROJECT_EXPLANATION.md   # 📚 Detailed technical docs
-├── PANEL_QA_GUIDE.md        # 🎤 Panel Q&A preparation
 ├── README.md                # 📖 This file
-└── conversation_log.txt     # 📝 Auto-generated logs (gitignored)
+└── conversation_log.txt     # 📝 Auto-generated conversation logs
 ```
 
 ---
@@ -347,10 +434,10 @@ open_api_guvi/
 | **LLM** | `gpt-oss:120b-cloud` via Ollama | 120B parameter model for intelligent conversation |
 | **Orchestration** | LangChain + LangChain-Ollama | Structured prompts, typed outputs, chain composition |
 | **Validation** | Pydantic v2 | Forces LLM to output valid JSON schemas |
-| **Parallelism** | `asyncio.gather()` | 3 agents in parallel = same latency as 1 |
+| **Parallelism** | `asyncio.wait()` with timeout | 3 agents in parallel with graceful timeout & partial results |
 | **Server** | Uvicorn | High-performance ASGI server |
-| **Deployment** | Render | One-click deploy with `render.yaml` |
-| **Monitoring** | UptimeRobot → `/ping` | Prevents cold starts on free tier |
+| **Config** | python-dotenv | Loads `.env` for API keys |
+| **Callbacks** | `requests` | Sends intelligence reports to GUVI endpoint |
 
 ---
 
@@ -360,7 +447,7 @@ open_api_guvi/
 
 1. Push the repository to GitHub
 2. Connect the repo on [Render Dashboard](https://dashboard.render.com)
-3. Render auto-detects `render.yaml` and configures:
+3. Configure build & start:
    - **Build:** `pip install -r requirements.txt`
    - **Start:** `uvicorn main:app --host 0.0.0.0 --port $PORT`
    - **Health Check:** `GET /health`
@@ -388,14 +475,17 @@ POST /analyze (API key verified)
 Parse request → Extract session, message, history
       │
       ▼
-Regex scan → Find known intel (bank, UPI, phone, links)
+Detect language from scammer's message (Hindi / Hinglish / English)
+      │
+      ▼
+Regex scan → Find known intel (bank, UPI, phone, links, emails, employee IDs)
       │
       ▼
 Determine missing fields → What do we still need?
       │
       ▼
 ┌─────────────────────────────────────────────┐
-│          asyncio.gather() — PARALLEL        │
+│       asyncio.wait(timeout=25s) — PARALLEL  │
 │                                             │
 │  🧓 Confused Uncle  ──▶ LLM ──▶ Score: 34  │
 │  🙋 Eager Victim    ──▶ LLM ──▶ Score: 49  │ ◀── 👑 Winner!
@@ -407,10 +497,13 @@ Determine missing fields → What do we still need?
 Pick best reply (highest score)
       │
       ▼
-Merge intel from ALL 3 agents
+Merge intel from ALL agents + Deduplicate
       │
       ▼
-Log conversation + Accumulate session intel
+Accumulate session intelligence across turns
+      │
+      ▼
+Log conversation to conversation_log.txt
       │
       ▼
 If ≥18 messages + scam confirmed + confidence ≥0.7
@@ -429,12 +522,13 @@ Scammer receives reply — suspects nothing 🪤
 
 | Scenario | What Happens |
 |---|---|
-| Tier 1 fails (structured output) | Tier 2 kicks in — raw text parsed for JSON |
-| Tier 2 also fails | Tier 3 — context-aware fallback (no LLM, reads scammer's message) |
+| Tier 1 fails (structured output) | Tier 2 kicks in — raw text parsed for JSON (3 methods) |
+| Tier 2 also fails | Tier 3 — `generate_smart_fallback()` (no LLM, reads scammer's message, 120+ unique replies) |
 | 1 agent completely fails | Other 2 compete normally |
 | 2 agents fail | Remaining 1 agent's response (from any tier) is used |
 | All 3 fail at all tiers | Endpoint-level dynamic fallback using `generate_smart_fallback()` |
-| Absolute worst case | Last resort: *"Sir ek minute, mera screen hang ho gaya. Aap apna naam aur employee ID bata do."* |
+| All 3 agents time out | Smart fallback with partially accumulated intel + callback if conditions met |
+| Absolute worst case | Last resort: 6 varied language-matched replies (randomly selected, never the same response twice) |
 
 The conversation **never breaks**. The response is **never repeated**.
 
@@ -442,7 +536,7 @@ The conversation **never breaks**. The response is **never repeated**.
 
 ## 📝 Conversation Logging
 
-Every interaction is logged with rich formatting:
+Every interaction is logged with rich formatting to `conversation_log.txt`:
 
 ```
 ================================================================================
@@ -453,16 +547,19 @@ Every interaction is logged with rich formatting:
 📨 SCAMMER MESSAGE:
 Your bank account is blocked! Click this link: bit.ly/fake
 
+📊 CONVERSATION TURN: 3
+
 HONEYPOT RESPONSE:
 Scam Detected: True | Confidence: 0.92 | Type: bank_fraud
-Winner Agent: eager_victim (Score: 49.0)
 
 VICTIM REPLY:
 Link not opening sir, error aa raha hai. Please send again?
 
 EXTRACTED INTELLIGENCE:
   • Phishing Links: bit.ly/fake
-  • Agents Competed: confused_uncle(34), eager_victim(49), worried_citizen(48)
+
+AGENT NOTES:
+[WINNER: eager_victim] Scam detected — phishing link identified | Agents competed: confused_uncle(34), eager_victim(49), worried_citizen(48)
 ================================================================================
 ```
 
