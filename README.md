@@ -575,16 +575,3 @@ Contributions are welcome! Here are some ideas:
 - 🌍 **More Languages** — Add support for regional Indian languages
 - 📈 **Analytics Dashboard** — Visualize scam patterns and intel
 
----
-
-## 📄 License
-
-This project was built for the **GUVI Hackathon**.
-
----
-
-<p align="center">
-  <strong>🪤 Uski baaton me uljhao. Unhi ke jaaal me phasao. 🎯</strong>
-  <br>
-  <em>Built with ❤️ to protect innocent people from online scammers.</em>
-</p>
