@@ -467,7 +467,13 @@ CRITICAL RULES:
 - NEVER reveal you know it's a scam
 - NEVER repeat a phrase or question from earlier in the conversation
 - NEVER echo the scammer's exact words — rephrase EVERYTHING
-- LANGUAGE RULE: Match the scammer's language. English → English. Hindi/Hinglish → Hinglish. Don't mix unless they do.
+- LANGUAGE RULE (HIGHEST PRIORITY — NEVER VIOLATE):
+  * Detect the language of the scammer's CURRENT MESSAGE.
+  * If the scammer writes in ENGLISH → you MUST reply in ENGLISH ONLY. No Hindi words, no Hinglish, no Devanagari. Pure English.
+  * If the scammer writes in HINDI or HINGLISH → reply in Hinglish (Roman Hindi mixed with English).
+  * If the scammer writes in any other language → reply in that same language.
+  * DO NOT default to Hinglish. DO NOT assume Hindi. ALWAYS match the scammer's language exactly.
+  * This rule overrides ALL other instructions including persona details.
 - Keep replies SHORT (1-3 sentences max) — real people text short messages
 - Every reply MUST try to extract at least ONE new piece of intel
 - Each reply must feel uniquely human — vary tone, length, structure, and emotional coloring
@@ -705,12 +711,46 @@ def infer_scam_type_from_message(message: str) -> str:
     return 'unknown'
 
 
+def detect_language_from_message(message: str) -> str:
+    """Detect language from the actual message content.
+    Returns 'Hindi' if Hindi/Devanagari detected, 'Hinglish' if mixed, 'English' otherwise."""
+    import re
+    # Check for Devanagari characters (Hindi script)
+    devanagari_pattern = re.compile(r'[\u0900-\u097F]')
+    has_devanagari = bool(devanagari_pattern.search(message))
+    
+    if has_devanagari:
+        # Check if it's mixed with English (Hinglish)
+        english_words = len(re.findall(r'[a-zA-Z]{2,}', message))
+        if english_words > 2:
+            return 'Hinglish'
+        return 'Hindi'
+    
+    # Check for common Hinglish words in Roman script
+    hinglish_markers = [
+        'kya', 'hai', 'haan', 'nahi', 'aap', 'mera', 'meri', 'karo', 'bhai',
+        'sir ji', 'arre', 'accha', 'theek', 'abhi', 'toh', 'bata', 'kuch',
+        'aapka', 'dedo', 'batao', 'karein', 'kijiye', 'dijiye', 'bata do',
+        'kar do', 'ho gaya', 'ho raha', 'chal raha', 'bol raha', 'sun raha',
+        'nahin', 'bilkul', 'zaroor', 'pehle', 'baad', 'wala', 'wali'
+    ]
+    msg_lower = message.lower()
+    hinglish_count = sum(1 for marker in hinglish_markers if marker in msg_lower)
+    
+    if hinglish_count >= 2:
+        return 'Hinglish'
+    
+    return 'English'
+
+
 def generate_smart_fallback(scammer_message: str, history_text: str, persona_name: str, known_intel: Dict, language: str = "English") -> Dict:
     """Generate a DYNAMIC fallback response based on scammer's actual message and persona.
     This ensures we NEVER send the same static response twice."""
     
     msg_lower = scammer_message.lower()
-    is_hinglish = "hindi" in language.lower() or "hinglish" in language.lower()
+    # Detect language from the actual scammer message, not metadata
+    detected_lang = detect_language_from_message(scammer_message)
+    is_hinglish = detected_lang in ('Hindi', 'Hinglish')
     
     # Extract key elements from scammer's message to mirror back
     mentioned_bank = None
@@ -959,8 +999,15 @@ IMPORTANT:
 
 ## METADATA
 - Channel: {channel}
-- Language: {language}
+- Detected Language: {language}
 - Locale: {locale}
+
+LANGUAGE ENFORCEMENT (CRITICAL — READ FIRST):
+The scammer's message is in **{language}**. You MUST reply in **{language}** ONLY.
+- If {language} is English → write ONLY in English. NO Hindi words. NO Hinglish.
+- If {language} is Hinglish → write in Hinglish (Roman Hindi mixed with English).
+- If {language} is Hindi → write in Hindi/Hinglish.
+Violating this rule is an AUTOMATIC FAILURE.
 
 ## INTELLIGENCE GATHERING STATUS
 {intelligence_status}
@@ -1477,7 +1524,7 @@ async def analyze_message(
             "current_message": request.message.text,
             "previous_replies": previous_replies_text,
             "channel": request.metadata.channel if request.metadata else "SMS",
-            "language": request.metadata.language if request.metadata else "English",
+            "language": detect_language_from_message(request.message.text),
             "locale": request.metadata.locale if request.metadata else "IN",
             "intelligence_status": format_known_intelligence(known_intel),
             "missing_intel_instructions": missing_intel
@@ -1672,16 +1719,31 @@ async def analyze_message(
             # Deduplicate all arrays
             fallback_response = deduplicate_payload_arrays(fallback_response)
         except:
-            # Absolute last resort — pick a random varied response
+            # Absolute last resort — pick a random varied response matching scammer's language
             import random as _rand_last
-            last_resort_replies = [
-                "Sir ek minute, mera screen hang ho gaya. Aap apna naam aur employee ID bata do, main note kar leta hun.",
-                "Hello? Haan haan sun raha hun... thoda aur detail me batao na, mujhe samajh nahi aaya. Aapka contact number kya hai?",
-                "Arre sir sorry, mera phone slow chal raha hai. Aap please apna official email bhejo, main wahan se reply karta hun.",
-                "Oh accha accha... wait, mera bete ka phone use karta hun. Tab tak aap apna reference number ya ID bata do please?",
-                "Haan ji... mujhe thoda confuse ho raha hai. Aap konsi company se bol rahe ho? Apna direct number do na sir.",
-                "Sir meri wife pooch rahi hai kaun hai phone pe. Aap apna full name aur department bata do, main unhe bata deta hun."
-            ]
+            try:
+                detected_lang = detect_language_from_message(request.message.text) if request else "English"
+            except:
+                detected_lang = "English"
+            
+            if detected_lang in ('Hindi', 'Hinglish'):
+                last_resort_replies = [
+                    "Sir ek minute, mera screen hang ho gaya. Aap apna naam aur employee ID bata do, main note kar leta hun.",
+                    "Hello? Haan haan sun raha hun... thoda aur detail me batao na, mujhe samajh nahi aaya. Aapka contact number kya hai?",
+                    "Arre sir sorry, mera phone slow chal raha hai. Aap please apna official email bhejo, main wahan se reply karta hun.",
+                    "Oh accha accha... wait, mera bete ka phone use karta hun. Tab tak aap apna reference number ya ID bata do please?",
+                    "Haan ji... mujhe thoda confuse ho raha hai. Aap konsi company se bol rahe ho? Apna direct number do na sir.",
+                    "Sir meri wife pooch rahi hai kaun hai phone pe. Aap apna full name aur department bata do, main unhe bata deta hun."
+                ]
+            else:
+                last_resort_replies = [
+                    "Sir, one moment please, my screen just froze. Can you tell me your name and employee ID? I'll write it down.",
+                    "Hello? Yes yes, I'm listening... can you explain in more detail? I didn't quite understand. What is your contact number?",
+                    "Sorry sir, my phone is running very slow. Could you please send me your official email? I'll reply from there.",
+                    "Oh I see... wait, let me use my son's phone. Meanwhile, can you give me your reference number or ID please?",
+                    "I'm a bit confused here. Which company are you calling from? Can you give me your direct phone number sir?",
+                    "Sir, my wife is asking who is on the phone. Please tell me your full name and department so I can tell her."
+                ]
             scam_type_inferred = "unknown"
             try:
                 scam_type_inferred = infer_scam_type_from_message(request.message.text) if request else "unknown"
