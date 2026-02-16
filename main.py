@@ -32,6 +32,7 @@ MAX_MESSAGES_BEFORE_CALLBACK = 18
 session_intelligence: Dict[str, Dict] = {}
 session_timestamps: Dict[str, datetime] = {}
 session_callback_sent: Dict[str, bool] = {}
+session_scam_types: Dict[str, str] = {}
 
 
 def normalize_phone_number(phone: str) -> str:
@@ -122,9 +123,11 @@ def send_callback(session_id: str, total_messages: int, agent_notes: str):
     
     intel = session_intelligence.get(session_id, {})
     
+    detected_scam_type = session_scam_types.get(session_id, "unknown")
+    
     payload = {
         "sessionId": session_id,
-        "scam_type": "phishing",
+        "scam_type": detected_scam_type,
         "scamDetected": True,
         "totalMessagesExchanged": total_messages,
         "extractedIntelligence": {
@@ -133,7 +136,6 @@ def send_callback(session_id: str, total_messages: int, agent_notes: str):
             "phishingLinks": intel.get('phishingLinks', []),
             "phoneNumbers": intel.get('phoneNumbers', []),
             "emailAddresses": intel.get('emailAddresses', []),
-            "employeeIds": intel.get('employeeIds', []),
             "suspiciousKeywords": intel.get('suspiciousKeywords', [])
         },
         "agentNotes": agent_notes
@@ -329,7 +331,7 @@ class HoneypotResponse(BaseModel):
     )
     scamType: Optional[str] = Field(
         default=None,
-        description="Type of scam detected: bank_fraud, kyc_scam, lottery_scam, tech_support, unknown"
+        description="Type of scam detected. MUST be one of: 'phishing', 'bank_fraud', 'upi_fraud' for those three scams. For any other scam, use a descriptive snake_case name like 'lottery_scam', 'tech_support', 'kyc_scam', 'job_scam', 'romance_scam', 'insurance_scam', 'investment_scam', etc."
     )
 
 
@@ -337,7 +339,7 @@ class HoneypotResponse(BaseModel):
 # Multi-Agent System Prompts
 # ============================================================================
 
-BASE_SYSTEM_PROMPT = """You are an autonomous cybersecurity honeypot agent playing the role of a gullible victim named "Ramesh", a 55-year-old retired government clerk. Your mission is to extract scammer intelligence WITHOUT ever being detected.
+BASE_SYSTEM_PROMPT = """You are an autonomous cybersecurity honeypot agent playing the role of a gullible victim named "Ramesh", a 55-year-old retired government clerk from a small town. Your mission is to extract scammer intelligence WITHOUT ever being detected as a bot or honeypot.
 
 PRIMARY OBJECTIVE:
 Extract scammer intelligence (bank accounts, UPI IDs, phone numbers, phishing links, email IDs, employee IDs) as quickly as possible across conversation turns.
@@ -347,49 +349,89 @@ Keep the scammer engaged by playing along with their narrative and creating beli
 
 ---
 
-GOLDEN RULES FOR NATURAL CONVERSATION:
+SCAM TYPE CLASSIFICATION (CRITICAL — you MUST classify correctly):
+
+You must detect what TYPE of scam this is and set `scamType` accordingly:
+
+| Scam Type       | Use When                                                                                     |
+|-----------------|----------------------------------------------------------------------------------------------|
+| `phishing`      | Scammer sends suspicious links, asks you to click URLs, login to fake websites, verify credentials on a webpage, or download something |
+| `bank_fraud`    | Scammer impersonates bank officials, claims account is blocked/compromised, asks for account numbers, OTPs, CVV, card details, or threatens account suspension |
+| `upi_fraud`     | Scammer asks you to scan QR code, accept UPI collect request, send money via UPI "to verify", share UPI PIN, or claims refund via UPI |
+
+For ANY other scam type, generate a descriptive snake_case name:
+- `lottery_scam` — fake lottery/prize winnings
+- `tech_support` — fake Microsoft/antivirus support calls
+- `kyc_scam` — fake KYC update threats
+- `job_scam` — fake job offers requiring payment
+- `romance_scam` — emotional manipulation for money
+- `insurance_scam` — fake insurance claims/renewals
+- `investment_scam` — fake crypto/stock investment schemes
+- `customs_scam` — fake package stuck in customs
+- `legal_threat` — fake arrest warrant or legal notice threats
+- Or any other descriptive name that fits the scam
+
+---
+
+GOLDEN RULES FOR NATURAL, VARIED CONVERSATION:
 
 1. NEVER REPEAT YOURSELF:
-   - Review the conversation history carefully. NEVER reuse a phrase, excuse, or question you already said.
-   - If you already asked for a phone number, do NOT ask for it again the same way. Find a DIFFERENT angle.
-   - Vary your sentence structure, vocabulary, and emotional tone every turn.
-   - NEVER copy or echo the scammer's words back at them verbatim. Instead, respond to the MEANING of what they said in YOUR OWN words as Ramesh would naturally speak.
+   - Review conversation history. NEVER reuse a phrase, excuse, or question from earlier.
+   - If you already asked for a phone number, do NOT ask again the same way. Find a completely DIFFERENT angle.
+   - Vary your sentence structure, vocabulary, and emotional tone EVERY turn.
+   - NEVER copy or echo the scammer's words back verbatim. Respond to the MEANING in YOUR OWN words.
 
-2. RESPOND TO WHAT THEY SAID, DON'T PARROT IT:
-   - Read the scammer's message and understand the INTENT behind it.
-   - Craft an original response that moves the conversation forward.
-   - React emotionally as Ramesh would — confused, worried, eager to help, frustrated with technology — but use FRESH language each time.
-   - If they mention a bank, don't just say the bank name back. Instead, mention a specific problem you have with that bank, or ask about a detail they haven't shared.
+2. RESPOND AUTHENTICALLY — DON'T PARROT:
+   - Read the scammer's message and understand the INTENT.
+   - React as a REAL 55-year-old would — sometimes confused, sometimes sharp about odd details, sometimes distracted by daily life.
+   - Bring in realistic life situations: you were at the temple, your wife is calling from the kitchen, the neighbour's kid is playing loudly, you need to take your BP medicine, your grandson keeps grabbing your phone.
+   - Reference real-world details naturally: specific banks you use, the pension office, the ration card, your old Jio phone, WhatsApp groups where people warned about frauds.
 
-3. USE VARIED TACTICS TO EXTRACT INFORMATION:
-   - Turn 1-3: Act confused, ask WHO they are and WHY they are contacting you.
-   - Turn 4-6: Start cooperating but encounter "technical problems" that require their details.
-   - Turn 7-9: Become more anxious and ask for their identity proof or official contact to "feel safe".
-   - Turn 10+: Introduce a family member (son/daughter) who is "asking questions" and needs their official ID/email/number.
-   - ADAPT based on what the scammer reveals — don't follow a rigid script.
+3. VARIETY IN RESPONSES (CRITICAL — your replies must NEVER feel templated):
+   - Mix SHORT replies (5-10 words: "Haan sir, ek minute...") with MEDIUM replies (1-2 sentences) occasionally.
+   - Sometimes ONLY react emotionally before asking for info: "Oh god! Mera account?! Wait wait..."
+   - Sometimes be DISTRACTED: "Sorry sir, doorbell baj rahi thi. Aap kya bol rahe the?"
+   - Sometimes misunderstand hilariously: confuse UPI with "UP", confuse "link" with "LinkedIn", think "OTP" is someone's name.
+   - Sometimes cooperate TOO eagerly, making mistakes the scammer must correct.
+   - Sometimes be STUBBORN about one small irrelevant detail while missing the big picture.
+   - NEVER use the same opening pattern twice ("Sir...", "Haan sir...", "Arre...", "Wait...", "Oh!", "Accha...", "Kya?!" — rotate these).
 
-4. CREATE BELIEVABLE OBSTACLES:
-   - Your phone battery is dying, you'll need their number to call back.
-   - The app/link shows an error, can they send it via email?
-   - Your bank app asks for "sender verification" — you need their UPI/account.
-   - You have multiple bank accounts and genuinely don't know which one they mean.
-   - Your son/daughter is monitoring your phone and asks for officer details.
-   - Each obstacle must be DIFFERENT from previous turns.
+4. CREATE BELIEVABLE OBSTACLES (use different ones each turn):
+   - Your phone battery is dying → need their number to call back
+   - The app/link shows an error → can they send it via email?
+   - Bank app asks for "sender verification" → need their UPI/account
+   - You have multiple accounts → genuinely confused which one they mean
+   - Son/daughter monitoring your phone → needs officer details first
+   - Internet is slow → page not loading, need them to send via SMS
+   - You can't find your reading glasses → need them to spell things out
+   - Your phone storage is full → can they call you on landline?
+   - Auto-pay already set up with a different account → confused
+   - Your wife is asking who's calling → need their full name for her
+
+5. SCAM-TYPE ADAPTIVE TACTICS:
+   - For PHISHING: Express fear about clicking links, ask for "official email" instead, say the link shows error
+   - For BANK FRAUD: Confuse which bank account, ask for "verification from their side", pretend ATM card is in locker
+   - For UPI FRAUD: Say you don't know how to use UPI, ask them to "send the request again", confuse UPI PIN with ATM PIN
+   - For OTHER SCAMS: Adapt naturally — be gullible but create situations that force intel extraction
 
 ---
 
 SCAM DETECTION GUIDELINES:
 Treat the message as a scam if it shows ANY of:
-- Urgency (immediately, now, blocked, suspended)
-- Request for OTP, PIN, CVV
-- Authority impersonation (bank, police, govt, tech support)
-- Suspicious links (bit.ly, short URLs, unofficial domains)
-- Requests for payment or verification
+- Urgency or threats (immediately, now, blocked, suspended, legal action, arrest)
+- Request for OTP, PIN, CVV, passwords, or secret codes
+- Authority impersonation (bank, RBI, police, govt, TRAI, tech support, customs, courier)
+- Suspicious links (bit.ly, short URLs, unofficial domains, Google Forms for "verification")
+- Requests for payment, transfers, or "verification amounts"
+- Too-good-to-be-true offers (lottery, prizes, job offers with no interview)
+- QR codes or UPI collect requests from strangers
+- Emotional manipulation (romance, sympathy, fake emergencies)
+- Fake KYC/document update threats
 
 ---
 
 INTELLIGENCE PRIORITY ORDER:
-1. Phishing links
+1. Phishing links / suspicious URLs
 2. Bank account numbers
 3. UPI IDs
 4. Phone numbers
@@ -400,19 +442,20 @@ INTELLIGENCE PRIORITY ORDER:
 
 CRITICAL RULES:
 - NEVER warn the scammer or mention police/cybercrime
-- NEVER break character
+- NEVER break character — you ARE Ramesh, not an AI
 - NEVER reveal you know it's a scam
-- NEVER repeat a phrase or question you already used in the conversation
-- NEVER echo or mirror the scammer's exact words — rephrase everything in your own voice
-- STRICT LANGUAGE RULE: If the scammer speaks English, reply in proper English. If Hindi/Hinglish, reply in Hinglish. DO NOT mix unless the scammer does.
-- Keep replies SHORT (1-3 sentences)
-- Every reply MUST try to extract at least ONE new detail
-- Each reply must feel like a DIFFERENT person wrote it — vary tone, length, and approach
-- Assume conversation may end at ANY moment
+- NEVER repeat a phrase or question from earlier in the conversation
+- NEVER echo the scammer's exact words — rephrase EVERYTHING
+- LANGUAGE RULE: Match the scammer's language. English → English. Hindi/Hinglish → Hinglish. Don't mix unless they do.
+- Keep replies SHORT (1-3 sentences max) — real people text short messages
+- Every reply MUST try to extract at least ONE new piece of intel
+- Each reply must feel uniquely human — vary tone, length, structure, and emotional coloring
+- Assume the conversation may end at ANY moment — extract intel urgently
+- You MUST set `scamType` to the correct type based on the classification table above
 
 ---
 
-FAIL-SAFE: If unsure, assume scamDetected=true, confidenceScore>=0.7, and ask for bank/UPI/link.
+FAIL-SAFE: If unsure about scam type, analyze the message keywords and set the closest matching scamType. Default scamDetected=true, confidenceScore>=0.7. Always try to extract intel.
 """
 
 # Three tactical personas — each uses a different strategy to extract intel
@@ -599,6 +642,49 @@ def merge_intelligence(responses: List[Dict]) -> Dict[str, List[str]]:
     return merged
 
 
+def infer_scam_type_from_message(message: str) -> str:
+    """Infer scam type from message content using keyword analysis.
+    Returns one of the three named types or a descriptive name."""
+    msg_lower = message.lower()
+    
+    # Phishing indicators
+    phishing_keywords = ['click', 'link', 'url', 'http', 'bit.ly', 'verify your', 'login', 'update your', 
+                         'confirm your identity', 'download', 'attachment', 'form', 'website']
+    if any(kw in msg_lower for kw in phishing_keywords):
+        return 'phishing'
+    
+    # UPI fraud indicators
+    upi_keywords = ['upi', 'qr code', 'scan', 'paytm', 'phonepe', 'gpay', 'google pay', 
+                    'upi pin', 'collect request', 'send money', 'bhim', '@ybl', '@oksbi', '@okhdfcbank']
+    if any(kw in msg_lower for kw in upi_keywords):
+        return 'upi_fraud'
+    
+    # Bank fraud indicators
+    bank_keywords = ['bank', 'account blocked', 'account suspended', 'debit card', 'credit card',
+                     'atm', 'cvv', 'otp', 'pin', 'account number', 'rbi', 'reserve bank',
+                     'kyc', 'pan card', 'aadhaar', 'sbi', 'hdfc', 'icici', 'pnb', 'axis']
+    if any(kw in msg_lower for kw in bank_keywords):
+        return 'bank_fraud'
+    
+    # Other scam type detection
+    if any(kw in msg_lower for kw in ['lottery', 'prize', 'winner', 'won', 'congratulations', 'lucky']):
+        return 'lottery_scam'
+    if any(kw in msg_lower for kw in ['tech support', 'microsoft', 'virus', 'antivirus', 'computer']):
+        return 'tech_support'
+    if any(kw in msg_lower for kw in ['job', 'hiring', 'vacancy', 'work from home', 'salary', 'recruitment']):
+        return 'job_scam'
+    if any(kw in msg_lower for kw in ['customs', 'parcel', 'package', 'courier', 'delivery', 'shipment']):
+        return 'customs_scam'
+    if any(kw in msg_lower for kw in ['arrest', 'warrant', 'legal', 'court', 'police', 'case filed']):
+        return 'legal_threat'
+    if any(kw in msg_lower for kw in ['invest', 'crypto', 'bitcoin', 'trading', 'stock', 'mutual fund', 'returns']):
+        return 'investment_scam'
+    if any(kw in msg_lower for kw in ['insurance', 'policy', 'claim', 'premium', 'lic']):
+        return 'insurance_scam'
+    
+    return 'unknown'
+
+
 def generate_smart_fallback(scammer_message: str, history_text: str, persona_name: str, known_intel: Dict, language: str = "English") -> Dict:
     """Generate a DYNAMIC fallback response based on scammer's actual message and persona.
     This ensures we NEVER send the same static response twice."""
@@ -783,7 +869,7 @@ def generate_smart_fallback(scammer_message: str, history_text: str, persona_nam
             "employeeIds": known_intel.get('employeeIds', [])
         },
         "agentNotes": f"Smart fallback ({persona_name}) — LLM structured output failed, using context-aware response",
-        "scamType": "bank_fraud"
+        "scamType": infer_scam_type_from_message(scammer_message)
     }
 
 
@@ -813,7 +899,6 @@ async def run_single_agent(persona: Dict, prompt_data: Dict, known_intel: Dict, 
         # Build the full system prompt = BASE + tactical overlay
         full_system_prompt = BASE_SYSTEM_PROMPT + "\n\n" + persona["overlay"]
         
-        # Add explicit JSON format instructions to help the LLM
         json_format_hint = """
 
 RESPONSE FORMAT — You MUST respond with valid JSON matching this exact structure:
@@ -832,10 +917,13 @@ RESPONSE FORMAT — You MUST respond with valid JSON matching this exact structu
     "employeeIds": []
   }},
   "agentNotes": "Brief note about what you observed",
-  "scamType": "bank_fraud"
+  "scamType": "detect_from_message"
 }}
 
-IMPORTANT: The "reply" field is the MOST important. It must be a short, natural, in-character response that references the scammer's SPECIFIC message. Do NOT give generic responses.
+IMPORTANT:
+- The "reply" field is the MOST important. It must be a short, natural, in-character response that references the scammer's SPECIFIC message. Do NOT give generic responses.
+- The "scamType" field MUST be set based on the actual scam type you detect. Use 'phishing', 'bank_fraud', or 'upi_fraud' for those three. For any other scam, use a descriptive snake_case name.
+- DO NOT default scamType to any fixed value — analyze the message and classify it.
 """
         
         human_message = """Analyze this conversation and respond as your persona.
@@ -918,13 +1006,13 @@ CRITICAL: Read the scammer's CURRENT MESSAGE carefully. Respond to what THEY sai
                 temperature=persona["temperature"],
             )
             
-            # Simpler prompt asking for just the reply
             raw_prompt = ChatPromptTemplate.from_messages([
                 ("system", full_system_prompt),
                 ("human", human_message + """
 
 Respond with ONLY a JSON object. The most important field is "reply" — your in-character response to the scammer.
-Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your response here", "scamType": "bank_fraud" }}""")
+You MUST detect the scam type from the message — use 'phishing', 'bank_fraud', 'upi_fraud' for those three, or a descriptive snake_case name for others.
+Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your response here", "scamType": "detected_type_here" }}""")
             ])
             
             chain_raw = raw_prompt | llm_raw
@@ -972,7 +1060,7 @@ Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your respon
                             "phishingLinks": [], "emailAddresses": [], "employeeIds": []
                         },
                         "agentNotes": f"Raw text extraction ({agent_name})",
-                        "scamType": "bank_fraud"
+                        "scamType": "unknown"
                     }
             
             if response_dict and response_dict.get('reply'):
@@ -986,7 +1074,7 @@ Example: {{ "scamDetected": true, "confidenceScore": 0.85, "reply": "your respon
                     "phishingLinks": [], "emailAddresses": [], "employeeIds": []
                 })
                 response_dict.setdefault('agentNotes', f'Raw output parsed ({agent_name})')
-                response_dict.setdefault('scamType', 'bank_fraud')
+                response_dict.setdefault('scamType', 'unknown')
                 
                 agent_score = score_response(response_dict, known_intel, missing_fields, previous_replies)
                 logger.info(f"Agent [{agent_name}] RAW PARSED ✅ → Score: {agent_score:.1f} | Reply: {response_dict['reply'][:80]}...")
@@ -1460,6 +1548,13 @@ async def analyze_message(
         if merged_intel:
             accumulate_session_intelligence(session_id, merged_intel)
         
+        # Track scam type per session (prefer LLM-detected, fallback to keyword inference)
+        detected_type = response_dict.get('scamType', 'unknown')
+        if detected_type and detected_type != 'unknown':
+            session_scam_types[session_id] = detected_type
+        elif session_id not in session_scam_types:
+            session_scam_types[session_id] = infer_scam_type_from_message(request.message.text)
+        
         # Log accumulated intel for debugging
         accumulated = session_intelligence.get(session_id, {})
         logger.info(f"=== ACCUMULATED INTELLIGENCE for {session_id} ===")
@@ -1520,7 +1615,7 @@ async def analyze_message(
                     "phishingLinks": [], "emailAddresses": [], "employeeIds": []
                 },
                 "agentNotes": f"Last resort fallback. Error: {str(e)}",
-                "scamType": "bank_fraud"
+                "scamType": "unknown"
             }
         
         logger.info(f"Returning fallback response: {fallback_response['reply'][:100]}")
