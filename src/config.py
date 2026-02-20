@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # Server
     PORT: int = 8000
     DEBUG: bool = False
-    API_KEY: str = "odouZ7AahKrK4SUgQlHoOdXxFP1vy0M6XGoHn405DPk"
+    API_KEY: str = "secret_api_key"
 
     # LLM Configuration — change model here only
     LLM_TEMPERATURE: float = 0.7
@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Honeypot strategy
     MAX_TURNS: int = 15
-    SEND_CALLBACK_AFTER_TURN: int = 8  # GUVI evaluator sends ~10 turns; fire at 8 to ensure delivery
+    SEND_CALLBACK_AFTER_TURN: int = 9  # GUVI evaluator sends ~10 turns; fire at 9 to ensure delivery
     SMART_PACING_ENABLED: bool = True
 
     class Config:
